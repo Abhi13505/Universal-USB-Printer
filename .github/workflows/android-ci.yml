@@ -32,8 +32,11 @@ jobs:
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Assemble Debug APK & Run Unit Tests
-        run: gradle :app:assembleDebug :app:testDebugUnitTest
+      - name: Assemble Debug APK
+        run: gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+
+      - name: Run Unit & Robolectric Tests
+        run: gradle :app:testDebugUnitTest -x kspDebugUnitTestKotlin -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
