@@ -3,12 +3,16 @@ name: Android CI & Release APK
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-and-test:
+  build-and-release:
     runs-on: ubuntu-latest
 
     steps:
@@ -32,14 +36,31 @@ jobs:
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Assemble Debug APK
+      - name: Assemble APK
         run: gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
 
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest -x kspDebugUnitTestKotlin -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
 
-      - name: Upload Debug APK Artifact
+      - name: Prepare Release APK Asset
+        run: cp app/build/outputs/apk/debug/app-debug.apk Universal-USB-Printer.apk
+
+      - name: Upload APK Workflow Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: universal-usb-printer-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: Universal-USB-Printer-APK
+          path: Universal-USB-Printer.apk
+
+      - name: Publish APK to GitHub Releases
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: Universal USB Printer ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          body: |
+            ### Universal USB Printer — Direct APK Download
+            Download **`Universal-USB-Printer.apk`** from the **Assets** section below to install directly on your Android phone or tablet.
+          files: Universal-USB-Printer.apk
+          draft: false
+          prerelease: false
+          make_latest: "true"
