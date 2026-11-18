@@ -17,6 +17,10 @@ Zero-driver-setup Android application (Kotlin + Jetpack Compose + Material 3) fo
 ## Build & Test
 
 ```bash
+# Decode the debug signing keystore once after cloning:
+base64 -d debug.keystore.base64 > debug.keystore
+
 gradle assembleDebug
 gradle :app:testDebugUnitTest
 ```
+

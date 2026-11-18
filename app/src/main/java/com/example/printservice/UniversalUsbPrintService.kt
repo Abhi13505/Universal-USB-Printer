@@ -124,7 +124,7 @@ class UniversalUsbPrintService : PrintService() {
         val effectiveMono = attrs.colorMode == PrintAttributes.COLOR_MODE_MONOCHROME ||
             !state.profile.effectiveColorSupported
         val copies = info.copies.coerceIn(1, 99)
-        val jobTitle = info.label?.takeIf { it.isNotBlank() } ?: "System Print Job"
+        val jobTitle = info.label.takeIf { it.isNotBlank() } ?: "System Print Job"
 
         val job = serviceScope.launch {
             var finalStatus = PrintJobStatus.COMPLETED

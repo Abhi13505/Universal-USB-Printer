@@ -248,7 +248,8 @@ object PrinterCapabilityResolver {
         ieee1284: Ieee1284Info,
         ipp: IppCapabilities?
     ): String {
-        if (!ipp?.makeAndModel.isNullOrBlank()) return ipp!!.makeAndModel
+        val ippModel = ipp?.makeAndModel
+        if (!ippModel.isNullOrBlank()) return ippModel
         val mfg = ieee1284.manufacturer.ifBlank { deviceInfo.manufacturerName.orEmpty() }.trim()
         val mdl = ieee1284.model.ifBlank { deviceInfo.productName.orEmpty() }.trim()
         val combined = listOf(mfg, mdl)
