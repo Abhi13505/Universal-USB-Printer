@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">Universal USB Printer</string>
+    <string name="tab_print_studio">Print Studio</string>
+    <string name="tab_printer_history">Printer &amp; History</string>
+    <string name="action_pick_photos">Pick Photos</string>
+    <string name="action_open_pdf">Open PDF</string>
+    <string name="action_diagnostic_sheet">Diagnostic Sheet</string>
+    <string name="action_print_now">Print Now</string>
+    <string name="action_cancel_print">Cancel Print</string>
+    <string name="action_grant_usb">Grant USB Access</string>
+    <string name="action_scan_usb">Scan USB</string>
+    <string name="action_soft_reset">Soft Reset</string>
+    <string name="action_print_diagnostic_sheet">Print Diagnostic Sheet</string>
+    <string name="action_clear_history">Clear History</string>
+    <string name="action_photo_layout">Photo Size &amp; Layout</string>
+    <string name="action_crop_area">Crop Area</string>
+    <string name="action_rotate_90">Rotate 90°</string>
+    <string name="action_apply">Apply</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_close">Close</string>
+    <string name="status_connected_ready">Ready</string>
+    <string name="status_probing">Probing</string>
+    <string name="status_permission_needed">Permission Needed</string>
+    <string name="status_fallback">Best-Effort Fallback</string>
+    <string name="status_disconnected">No USB Printer</string>
+    <string name="status_error">Printer Error</string>
+    <string name="badge_color">Color</string>
+    <string name="badge_mono">Mono</string>
+    <string name="empty_studio_title">Paper-White Print Studio</string>
+    <string name="empty_studio_subtitle">Load up to 20 photos, open a PDF document, or run a diagnostic test sheet. Ready for offline prep even before plugging in USB OTG.</string>
+    <string name="empty_history_title">No Print Jobs Yet</string>
+    <string name="empty_history_subtitle">Completed, cancelled, and failed USB print jobs appear here with exact byte and protocol logs.</string>
+</resources>

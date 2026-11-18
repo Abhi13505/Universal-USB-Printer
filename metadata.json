@@ -1,0 +1,6 @@
+{
+  "name": "Universal USB Printer",
+  "description": "Print PDFs and photos directly to standard office and home USB OTG printers with automatic capability detection and zero manual driver setup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

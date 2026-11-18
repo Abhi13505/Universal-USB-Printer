@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB Printer Class (Class 7, Subclass 1: Protocol 1 Uni-dir, 2 Bi-dir, 4 IPP-over-USB) -->
+    <usb-device class="7" subclass="1" protocol="1" />
+    <usb-device class="7" subclass="1" protocol="2" />
+    <usb-device class="7" subclass="1" protocol="4" />
+    <usb-device class="7" subclass="1" />
+    <!-- Explicit fallback for Samsung SCX-3200 (VID=0x04E8 / 1256, PID=0x3441 / 13377) -->
+    <usb-device vendor-id="1256" product-id="13377" />
+</resources>
