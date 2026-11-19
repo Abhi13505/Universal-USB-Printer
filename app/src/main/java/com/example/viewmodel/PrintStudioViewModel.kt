@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 enum class AppTab(val label: String) {
     PRINT_STUDIO("Print Studio"),
-    PRINTER_HISTORY("Printer & History")
+    PRINTER_HISTORY("Printer")
 }
 
 data class LoadedPhotoItem(

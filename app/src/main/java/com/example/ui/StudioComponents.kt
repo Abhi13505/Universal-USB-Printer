@@ -4,10 +4,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,29 +17,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material.icons.filled.UsbOff
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,8 +44,10 @@ import androidx.compose.ui.unit.dp
 import com.example.model.DriverProtocol
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
-import com.example.ui.theme.MonoTextStyle
 import com.example.usb.PrinterCapabilityResolver
+
+private val CardCornerShape = RoundedCornerShape(16.dp)
+private val ChipCornerShape = RoundedCornerShape(12.dp)
 
 @Composable
 fun StudioSectionCard(
@@ -61,14 +57,14 @@ fun StudioSectionCard(
     val studio = LocalStudioColors.current
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
+        shape = CardCornerShape,
         color = studio.cardSurface,
         border = BorderStroke(1.dp, studio.hairlineBorder),
         tonalElevation = 0.dp
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
             content = content
         )
     }
@@ -85,7 +81,7 @@ fun StatusBadgePill(
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(backgroundColor)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -110,17 +106,18 @@ fun StudioChoiceChip(
     val studio = LocalStudioColors.current
     val bg = if (selected) studio.activeAccentSoft else studio.secondaryContainer
     val border = if (selected) studio.activeAccent else studio.hairlineBorder
+    val borderWidth = if (selected) 1.5.dp else 1.dp
     val txt = if (selected) studio.activeAccent else studio.primaryInk
 
     Box(
         modifier = modifier
-            .minimumInteractiveComponentSize()
-            .clip(MaterialTheme.shapes.small)
+            .height(40.dp)
+            .clip(ChipCornerShape)
             .background(bg)
-            .border(1.dp, border, MaterialTheme.shapes.small)
+            .border(borderWidth, border, ChipCornerShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -131,6 +128,49 @@ fun StudioChoiceChip(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+fun <T> SegmentedChipRow(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    testTag: (T) -> String,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (options.size in 2..4) {
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            options.forEach { option ->
+                StudioChoiceChip(
+                    label = label(option),
+                    selected = option == selected,
+                    onClick = { onSelect(option) },
+                    testTag = testTag(option),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    } else {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            options.forEach { option ->
+                StudioChoiceChip(
+                    label = label(option),
+                    selected = option == selected,
+                    onClick = { onSelect(option) },
+                    testTag = testTag(option)
+                )
+            }
+        }
     }
 }
 
@@ -146,175 +186,116 @@ fun PrinterStatusHeaderCard(
     val isUnsupported = usbState is UsbPrinterState.Ready &&
         usbState.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED
 
-    StudioSectionCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+    val dotColor = when (usbState) {
+        is UsbPrinterState.Ready -> {
+            val isHardwareVerified = PrinterCapabilityResolver.isHardwareVerifiedPrinter(usbState.deviceInfo)
+            when {
+                isUnsupported -> studio.crimson
+                !isHardwareVerified && !testPageVerified -> studio.amber
+                usbState.profile.isBestEffortFallback -> studio.amber
+                else -> studio.emerald
+            }
+        }
+        is UsbPrinterState.PermissionRequired, is UsbPrinterState.Probing -> studio.amber
+        is UsbPrinterState.Error -> studio.crimson
+        UsbPrinterState.Disconnected -> studio.mutedGraphite.copy(alpha = 0.4f)
+    }
+
+    val title = when (usbState) {
+        is UsbPrinterState.Ready -> usbState.profile.makeAndModel
+        is UsbPrinterState.PermissionRequired ->
+            usbState.deviceInfo.productName ?: "USB Printer (${usbState.deviceInfo.vidPidKey})"
+        is UsbPrinterState.Probing ->
+            usbState.deviceInfo.productName ?: "Checking printer..."
+        is UsbPrinterState.Error ->
+            usbState.deviceInfo?.productName ?: "Printer error"
+        UsbPrinterState.Disconnected -> "No printer connected"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = CardCornerShape,
+        color = studio.cardSurface,
+        border = BorderStroke(1.dp, studio.hairlineBorder),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                val (icon, iconBg, iconTint) = when {
-                    isUnsupported -> Triple(Icons.Filled.Warning, studio.crimsonSoft, studio.crimson)
-                    usbState is UsbPrinterState.Ready -> Triple(Icons.Filled.Print, studio.emeraldSoft, studio.emerald)
-                    usbState is UsbPrinterState.PermissionRequired -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
-                    usbState is UsbPrinterState.Probing -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
-                    usbState is UsbPrinterState.Error -> Triple(Icons.Filled.Error, studio.crimsonSoft, studio.crimson)
-                    else -> Triple(Icons.Filled.UsbOff, studio.secondaryContainer, studio.mutedGraphite)
-                }
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(10.dp)
                         .clip(CircleShape)
-                        .background(iconBg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = "USB printer status icon",
-                        tint = iconTint,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    val title = when (usbState) {
-                        is UsbPrinterState.Ready -> usbState.profile.makeAndModel
-                        is UsbPrinterState.PermissionRequired ->
-                            usbState.deviceInfo.productName ?: "USB Printer (${usbState.deviceInfo.vidPidKey})"
-                        is UsbPrinterState.Probing ->
-                            usbState.deviceInfo.productName ?: "Probing USB Printer..."
-                        is UsbPrinterState.Error ->
-                            usbState.deviceInfo?.productName ?: "Printer Error"
-                        UsbPrinterState.Disconnected -> "No USB OTG Printer"
-                    }
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = studio.primaryInk,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        when (usbState) {
-                            is UsbPrinterState.Ready -> {
-                                val isHardwareVerified = PrinterCapabilityResolver.isHardwareVerifiedPrinter(usbState.deviceInfo)
-                                when {
-                                    isUnsupported -> {
-                                        StatusBadgePill("Unsupported", studio.crimson, studio.crimsonSoft)
-                                    }
-                                    !isHardwareVerified && !testPageVerified -> {
-                                        StatusBadgePill("Verify Test Page", studio.amber, studio.amberSoft)
-                                    }
-                                    usbState.profile.isBestEffortFallback -> {
-                                        StatusBadgePill("Ready (Fallback)", studio.amber, studio.amberSoft)
-                                    }
-                                    else -> {
-                                        StatusBadgePill("Ready", studio.emerald, studio.emeraldSoft)
-                                    }
-                                }
-                                if (!isUnsupported) {
-                                    val isColorCap = !effectiveMonochrome && usbState.profile.effectiveColorSupported
-                                    Row(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(50))
-                                            .background(if (isColorCap) studio.activeAccentSoft else studio.secondaryContainer)
-                                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isColorCap) Icons.Filled.Palette else Icons.Outlined.Contrast,
-                                            contentDescription = if (isColorCap) "Color capability" else "Monochrome capability",
-                                            tint = if (isColorCap) studio.activeAccent else studio.mutedGraphite,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = if (isColorCap) "Color" else "Mono",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isColorCap) studio.activeAccent else studio.mutedGraphite
-                                        )
-                                    }
-                                }
-                            }
-                            is UsbPrinterState.PermissionRequired -> {
-                                StatusBadgePill("Permission Needed", studio.amber, studio.amberSoft)
-                            }
-                            is UsbPrinterState.Probing -> {
-                                StatusBadgePill("Probing USB...", studio.amber, studio.amberSoft)
-                            }
-                            is UsbPrinterState.Error -> {
-                                StatusBadgePill("Error", studio.crimson, studio.crimsonSoft)
-                            }
-                            UsbPrinterState.Disconnected -> {
-                                Text(
-                                    text = "Plug in USB OTG cable or prepare offline",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = studio.mutedGraphite,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+                        .background(dotColor)
+                )
 
-            when (usbState) {
-                is UsbPrinterState.PermissionRequired -> {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = if (usbState is UsbPrinterState.Disconnected) studio.mutedGraphite else studio.primaryInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (usbState is UsbPrinterState.PermissionRequired) {
                     Button(
                         onClick = onGrantPermission,
                         colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
+                        shape = ChipCornerShape,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
+                            .height(40.dp)
                             .testTag("grant_usb_permission_button")
                     ) {
-                        Text("Allow USB")
+                        Text("Allow USB", style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                else -> {
-                    FilledTonalButton(
-                        onClick = onScanUsb,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("scan_usb_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Scan USB printers",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+
+                IconButton(
+                    onClick = onScanUsb,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("scan_usb_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = "Scan USB printers",
+                        tint = studio.mutedGraphite,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
-        }
-        if (usbState is UsbPrinterState.Error) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .background(studio.crimsonSoft)
-                    .padding(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Warning,
-                    contentDescription = "Error details",
-                    tint = studio.crimson,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = usbState.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = studio.crimson
-                )
+
+            if (usbState is UsbPrinterState.Error) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(ChipCornerShape)
+                        .background(studio.crimsonSoft)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = "Error details",
+                        tint = studio.crimson,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = usbState.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = studio.crimson
+                    )
+                }
             }
         }
     }
@@ -346,7 +327,7 @@ fun CopiesStepperRow(
                 enabled = copies > 1,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(MaterialTheme.shapes.small)
+                    .clip(ChipCornerShape)
                     .background(studio.secondaryContainer)
                     .testTag("copies_decrement_button")
             ) {
@@ -354,7 +335,8 @@ fun CopiesStepperRow(
             }
             Text(
                 text = copies.toString(),
-                style = MonoTextStyle.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
                 color = studio.primaryInk,
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
@@ -363,7 +345,7 @@ fun CopiesStepperRow(
                 enabled = copies < 99,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(MaterialTheme.shapes.small)
+                    .clip(ChipCornerShape)
                     .background(studio.secondaryContainer)
                     .testTag("copies_increment_button")
             ) {

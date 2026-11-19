@@ -4,62 +4,39 @@ import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,39 +45,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.document.PhotoSheetPlan
-import com.example.model.DitherMode
 import com.example.model.DriverProtocol
 import com.example.model.NormalizedCropRect
-import com.example.model.OutputMode
-import com.example.model.PageOrientation
-import com.example.model.PageRangeMode
-import com.example.model.PaperSize
 import com.example.model.PdfPrintOptions
 import com.example.model.PhotoLayoutOptions
 import com.example.model.PrintJobProgress
-import com.example.model.PrintQuality
 import com.example.model.PrintTuningOptions
-import com.example.model.ScaleMode
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
-import com.example.ui.theme.MonoTextStyle
+import com.example.ui.theme.LocalWindowWidthSizeClass
 import com.example.usb.PrinterCapabilityResolver
-import com.example.viewmodel.PrintStudioViewModel
 import com.example.viewmodel.StudioDocument
 
-@OptIn(ExperimentalLayoutApi::class)
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun PrintStudioScreen(
     usbState: UsbPrinterState,
@@ -138,9 +101,11 @@ fun PrintStudioScreen(
     modifier: Modifier = Modifier
 ) {
     val studio = LocalStudioColors.current
+    val isWideScreen = LocalWindowWidthSizeClass.current != WindowWidthSizeClass.Compact
     var showCropDialog by remember { mutableStateOf(false) }
     var showPhotoLayoutDialog by remember { mutableStateOf(false) }
-    var tuningExpanded by remember { mutableStateOf(true) }
+    var showPdfOptionsSheet by remember { mutableStateOf(false) }
+    var tuningExpanded by remember { mutableStateOf(false) }
     val isUnsupportedPrinter = usbState is UsbPrinterState.Ready &&
         usbState.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED
 
@@ -184,11 +149,20 @@ fun PrintStudioScreen(
         )
     }
 
+    if (showPdfOptionsSheet && document is StudioDocument.PdfDoc) {
+        PdfOptionsBottomSheet(
+            pdfOptions = pdfOptions,
+            onUpdatePdfOptions = onUpdatePdfOptions,
+            onDismiss = { showPdfOptionsSheet = false }
+        )
+    }
+
     if (showFallbackConfirmDialog && usbState is UsbPrinterState.Ready) {
         val profile = usbState.profile
         AlertDialog(
             onDismissRequest = onDismissFallbackDialog,
             containerColor = studio.cardSurface,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "1-Inch Test Page Required",
@@ -197,7 +171,7 @@ fun PrintStudioScreen(
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = profile.unverifiedLanguageWarning ?: profile.resolutionReason,
                         style = MaterialTheme.typography.bodyMedium,
@@ -217,6 +191,7 @@ fun PrintStudioScreen(
                 ) {
                     Button(
                         onClick = onPrintTinyProbe,
+                        shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -227,6 +202,7 @@ fun PrintStudioScreen(
                     }
                     OutlinedButton(
                         onClick = onOpenPrinterSettings,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
@@ -248,671 +224,352 @@ fun PrintStudioScreen(
         )
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        // 1. Clean Printer Status Header
-        PrinterStatusHeaderCard(
-            usbState = usbState,
-            effectiveMonochrome = effectiveMonochrome,
-            testPageVerified = testPageVerified,
-            onScanUsb = onScanUsb,
-            onGrantPermission = onGrantPermission
+    val launchPhotos = {
+        photoPickerLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
         )
+    }
+    val launchPdf = {
+        pdfPickerLauncher.launch(arrayOf("application/pdf"))
+    }
 
-        if (isUnsupportedPrinter && usbState is UsbPrinterState.Ready) {
-            StudioSectionCard {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .background(studio.crimsonSoft)
-                        .padding(12.dp)
-                        .testTag("unsupported_printer_banner"),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Unsupported Printer Language",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = studio.crimson,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = usbState.profile.unverifiedLanguageWarning
-                            ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = studio.crimson
-                    )
-                    OutlinedButton(
-                        onClick = onOpenPrinterSettings,
-                        border = BorderStroke(1.dp, studio.crimson),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("unsupported_open_settings_button")
-                    ) {
-                        Text("Select Manual Protocol Override", color = studio.crimson)
-                    }
-                }
-            }
-        }
-
-        if (!lastPrintError.isNullOrBlank()) {
-            StudioSectionCard {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .background(studio.crimsonSoft)
-                        .padding(12.dp)
-                        .testTag("print_error_banner"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = lastPrintError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = studio.crimson,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = onDismissPrintError,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("dismiss_print_error_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Dismiss print error",
-                            tint = studio.crimson
-                        )
-                    }
-                }
-            }
-        }
-
-        if (usbState is UsbPrinterState.Ready && !isUnsupportedPrinter) {
-            OutlinedButton(
-                onClick = onPrintTestPage,
-                enabled = !printProgress.isPrinting,
-                border = BorderStroke(1.dp, studio.activeAccent),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("print_test_page_button")
-            ) {
-                Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.action_print_test_page))
-            }
-        }
-
-        // 2. Document Source Actions
+    if (isWideScreen) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            FilledTonalButton(
-                onClick = {
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            // Left pane (~45%): scrollable controls
+            Column(
+                modifier = Modifier
+                    .weight(0.45f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                PrinterControlsHeaderSection(
+                    usbState = usbState,
+                    effectiveMonochrome = effectiveMonochrome,
+                    testPageVerified = testPageVerified,
+                    isUnsupportedPrinter = isUnsupportedPrinter,
+                    lastPrintError = lastPrintError,
+                    isPrinting = printProgress.isPrinting,
+                    onScanUsb = onScanUsb,
+                    onGrantPermission = onGrantPermission,
+                    onOpenPrinterSettings = onOpenPrinterSettings,
+                    onDismissPrintError = onDismissPrintError,
+                    onPrintTestPage = onPrintTestPage
+                )
+
+                DocumentSourceRow(
+                    onPickPhotos = launchPhotos,
+                    onPickPdf = launchPdf
+                )
+
+                if (document !is StudioDocument.Empty) {
+                    PrePrintTuningCard(
+                        tuning = tuning,
+                        effectiveMonochrome = effectiveMonochrome,
+                        expanded = tuningExpanded,
+                        onToggleExpanded = { tuningExpanded = !tuningExpanded },
+                        onUpdateTuning = onUpdateTuning,
+                        onOpenCrop = { showCropDialog = true },
+                        onRotate90 = onRotate90
                     )
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("pick_photos_button")
-            ) {
-                Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Photos", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
 
-            FilledTonalButton(
-                onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("open_pdf_button")
-            ) {
-                Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-
-            OutlinedButton(
-                onClick = onLoadDiagnosticSheet,
-                border = BorderStroke(1.dp, studio.hairlineBorder),
-                modifier = Modifier
-                    .height(48.dp)
-                    .testTag("load_diagnostic_button")
-            ) {
-                Icon(Icons.Filled.Print, contentDescription = "Load diagnostic test sheet", modifier = Modifier.size(18.dp))
-            }
-        }
-
-        // 3. Live Paper Canvas or Empty State
-        if (document is StudioDocument.Empty) {
-            StudioSectionCard {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 28.dp, horizontal = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .background(studio.activeAccentSoft),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Print,
-                            contentDescription = null,
-                            tint = studio.activeAccent,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Text(
-                        text = stringResource(R.string.empty_studio_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = studio.primaryInk,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = stringResource(R.string.empty_studio_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = studio.mutedGraphite,
-                        textAlign = TextAlign.Center
+                    DocumentOptionsSection(
+                        document = document,
+                        pdfOptions = pdfOptions,
+                        photoLayout = photoLayout,
+                        photoSheetPlan = photoSheetPlan,
+                        onOpenPdfOptionsSheet = { showPdfOptionsSheet = true },
+                        onOpenPhotoLayoutStudio = { showPhotoLayoutDialog = true },
+                        onUpdatePhotoLayout = onUpdatePhotoLayout
                     )
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
             }
-        } else {
-            // Live Paper Canvas Card
-            StudioSectionCard {
-                val (docTitle, totalPreviewPages) = when (document) {
-                    is StudioDocument.PdfDoc -> document.title to document.totalPages
-                    is StudioDocument.PhotoBatch -> {
-                        val sheets = photoSheetPlan?.pages?.size ?: 1
-                        val label = if (document.items.size == 1) document.items[0].label else "${document.items.size} Photos"
-                        label to sheets
-                    }
-                    StudioDocument.DiagnosticSheet -> "Diagnostic Test Sheet" to 1
-                    StudioDocument.Empty -> "" to 1
-                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = docTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (effectiveMonochrome) {
-                                "Preview: 1-bit ${tuning.ditherMode.displayName}"
-                            } else {
-                                "Preview: Full Color"
-                            },
-                            style = MonoTextStyle,
-                            color = studio.mutedGraphite
-                        )
-                    }
-
-                    if (totalPreviewPages > 1) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = { onStepPage(-1) },
-                                enabled = currentPreviewPage > 0,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .testTag("preview_prev_page")
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous page")
-                            }
-                            Text(
-                                text = "${currentPreviewPage + 1}/$totalPreviewPages",
-                                style = MonoTextStyle
-                            )
-                            IconButton(
-                                onClick = { onStepPage(1) },
-                                enabled = currentPreviewPage < totalPreviewPages - 1,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .testTag("preview_next_page")
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next page")
-                            }
-                        }
-                    }
-                }
-
+            // Right pane (~55%): vertically centered preview with Print button pinned below
+            Column(
+                modifier = Modifier
+                    .weight(0.55f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .background(studio.elevatedSurface)
-                        .padding(16.dp),
+                        .weight(1f)
+                        .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    val bmp = previewBitmap
-                    if (bmp != null && !bmp.isRecycled) {
-                        val aspect = (bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat())
-                            .coerceIn(0.55f, 1.8f)
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Live paper print preview",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth(0.76f)
-                                .aspectRatio(aspect)
-                                .shadow(4.dp, RoundedCornerShapeMinimal)
-                                .background(Color.White)
-                                .border(1.dp, studio.hairlineBorder)
-                                .testTag("live_paper_preview")
-                        )
+                    if (document is StudioDocument.Empty) {
+                        EmptyStudioPreviewCard()
                     } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(0.72f)
-                                .aspectRatio(0.707f)
-                                .background(Color.White)
-                                .border(1.dp, studio.hairlineBorder),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Rendering sheet...", style = MaterialTheme.typography.bodySmall, color = studio.mutedGraphite)
-                        }
+                        LivePaperPreviewCard(
+                            document = document,
+                            tuning = tuning,
+                            photoSheetPlan = photoSheetPlan,
+                            previewBitmap = previewBitmap,
+                            currentPreviewPage = currentPreviewPage,
+                            effectiveMonochrome = effectiveMonochrome,
+                            onStepPage = onStepPage,
+                            isWidePane = true
+                        )
                     }
                 }
-            }
 
-            // 4. Pre-Print Tuning Panel
-            StudioSectionCard {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .minimumInteractiveComponentSize()
-                        .clickable { tuningExpanded = !tuningExpanded }
-                        .testTag("tuning_header_toggle"),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Tune, contentDescription = null, tint = studio.primaryInk, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Pre-Print Tuning", style = MaterialTheme.typography.titleMedium)
-                    }
-                    Icon(
-                        imageVector = if (tuningExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (tuningExpanded) "Collapse tuning" else "Expand tuning"
+                if (document !is StudioDocument.Empty) {
+                    PrintActionContent(
+                        usbState = usbState,
+                        isUnsupportedPrinter = isUnsupportedPrinter,
+                        printProgress = printProgress,
+                        onStartPrint = onStartPrint,
+                        onCancelPrint = onCancelPrint
+                    )
+                }
+            }
+        }
+    } else {
+        // Phone: single scrollable column with pinned Print Now bottom bar respecting system insets
+        Column(modifier = modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                PrinterControlsHeaderSection(
+                    usbState = usbState,
+                    effectiveMonochrome = effectiveMonochrome,
+                    testPageVerified = testPageVerified,
+                    isUnsupportedPrinter = isUnsupportedPrinter,
+                    lastPrintError = lastPrintError,
+                    isPrinting = printProgress.isPrinting,
+                    onScanUsb = onScanUsb,
+                    onGrantPermission = onGrantPermission,
+                    onOpenPrinterSettings = onOpenPrinterSettings,
+                    onDismissPrintError = onDismissPrintError,
+                    onPrintTestPage = onPrintTestPage
+                )
+
+                DocumentSourceRow(
+                    onPickPhotos = launchPhotos,
+                    onPickPdf = launchPdf
+                )
+
+                if (document is StudioDocument.Empty) {
+                    EmptyStudioPreviewCard()
+                } else {
+                    LivePaperPreviewCard(
+                        document = document,
+                        tuning = tuning,
+                        photoSheetPlan = photoSheetPlan,
+                        previewBitmap = previewBitmap,
+                        currentPreviewPage = currentPreviewPage,
+                        effectiveMonochrome = effectiveMonochrome,
+                        onStepPage = onStepPage,
+                        isWidePane = false
+                    )
+
+                    PrePrintTuningCard(
+                        tuning = tuning,
+                        effectiveMonochrome = effectiveMonochrome,
+                        expanded = tuningExpanded,
+                        onToggleExpanded = { tuningExpanded = !tuningExpanded },
+                        onUpdateTuning = onUpdateTuning,
+                        onOpenCrop = { showCropDialog = true },
+                        onRotate90 = onRotate90
+                    )
+
+                    DocumentOptionsSection(
+                        document = document,
+                        pdfOptions = pdfOptions,
+                        photoLayout = photoLayout,
+                        photoSheetPlan = photoSheetPlan,
+                        onOpenPdfOptionsSheet = { showPdfOptionsSheet = true },
+                        onOpenPhotoLayoutStudio = { showPhotoLayoutDialog = true },
+                        onUpdatePhotoLayout = onUpdatePhotoLayout
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = tuningExpanded,
-                    enter = expandVertically(spring()) + fadeIn(),
-                    exit = shrinkVertically(spring()) + fadeOut()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (document !is StudioDocument.Empty) {
+                Surface(
+                    color = studio.cardSurface,
+                    tonalElevation = 0.dp
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Output Mode", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutputMode.entries.forEach { mode ->
-                                StudioChoiceChip(
-                                    label = mode.displayName,
-                                    selected = tuning.outputMode == mode,
-                                    onClick = { onUpdateTuning { it.copy(outputMode = mode) } },
-                                    testTag = "output_mode_${mode.name.lowercase()}",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        if (effectiveMonochrome) {
-                            Text("Monochrome Dither Mode", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                DitherMode.entries.forEach { dither ->
-                                    StudioChoiceChip(
-                                        label = dither.displayName,
-                                        selected = tuning.ditherMode == dither,
-                                        onClick = { onUpdateTuning { it.copy(ditherMode = dither) } },
-                                        testTag = "dither_mode_${dither.name.lowercase()}"
-                                    )
-                                }
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
-                                onClick = { showCropDialog = true },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("open_crop_button")
-                            ) {
-                                Icon(Icons.Filled.Crop, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (tuning.cropRect.isFull) "Crop Area" else "Cropped")
-                            }
-                            OutlinedButton(
-                                onClick = onRotate90,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("rotate_90_button")
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Rotate (${tuning.rotationDegrees}°)")
-                            }
-                        }
-
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Brightness", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                                Text(
-                                    text = "%+.0f%%".format(tuning.brightness * 100f),
-                                    style = MonoTextStyle,
-                                    color = studio.primaryInk
-                                )
-                            }
-                            Slider(
-                                value = tuning.brightness,
-                                onValueChange = { v -> onUpdateTuning { it.copy(brightness = v) } },
-                                valueRange = -0.45f..0.45f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = studio.activeAccent,
-                                    activeTrackColor = studio.activeAccent
-                                ),
-                                modifier = Modifier.testTag("brightness_slider")
-                            )
-                        }
-
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Contrast", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                                Text(
-                                    text = "%.2f×".format(tuning.contrast),
-                                    style = MonoTextStyle,
-                                    color = studio.primaryInk
-                                )
-                            }
-                            Slider(
-                                value = tuning.contrast,
-                                onValueChange = { v -> onUpdateTuning { it.copy(contrast = v) } },
-                                valueRange = 0.5f..2.0f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = studio.activeAccent,
-                                    activeTrackColor = studio.activeAccent
-                                ),
-                                modifier = Modifier.testTag("contrast_slider")
-                            )
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Safe Margin (PCL 5 / PCL-XL / PWG)", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                                Text(
-                                    text = "${tuning.safeMarginMm.toInt()} mm",
-                                    style = MonoTextStyle,
-                                    color = studio.primaryInk
-                                )
-                            }
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(0, 4, 5, 8, 10).forEach { mm ->
-                                    StudioChoiceChip(
-                                        label = "${mm} mm",
-                                        selected = kotlin.math.abs(tuning.safeMarginMm - mm) < 0.2f,
-                                        onClick = { onUpdateTuning { it.copy(safeMarginMm = mm.toFloat()) } },
-                                        testTag = "safe_margin_${mm}mm"
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 5. Document-Specific Options (PDF Options OR Photo Layout Summary)
-            when (document) {
-                is StudioDocument.PdfDoc -> {
-                    StudioSectionCard {
-                        Text("PDF Print Options", style = MaterialTheme.typography.titleMedium)
-
-                        Text("Page Range", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            PageRangeMode.entries.forEach { mode ->
-                                StudioChoiceChip(
-                                    label = mode.displayName,
-                                    selected = pdfOptions.pageRangeMode == mode,
-                                    onClick = { onUpdatePdfOptions { it.copy(pageRangeMode = mode) } },
-                                    testTag = "pdf_range_${mode.name.lowercase()}"
-                                )
-                            }
-                        }
-
-                        if (pdfOptions.pageRangeMode == PageRangeMode.CUSTOM) {
-                            OutlinedTextField(
-                                value = pdfOptions.customRangeText,
-                                onValueChange = { txt -> onUpdatePdfOptions { it.copy(customRangeText = txt) } },
-                                label = { Text("Custom pages (e.g. 1-3, 5)") },
-                                singleLine = true,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("pdf_custom_range_input")
-                            )
-                        }
-
-                        CopiesStepperRow(
-                            copies = pdfOptions.copies,
-                            onCopiesChange = { c -> onUpdatePdfOptions { it.copy(copies = c) } }
-                        )
-
-                        Text("Paper Size", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            PaperSize.entries.forEach { paper ->
-                                StudioChoiceChip(
-                                    label = paper.displayName,
-                                    selected = pdfOptions.paperSize == paper,
-                                    onClick = { onUpdatePdfOptions { it.copy(paperSize = paper) } },
-                                    testTag = "pdf_paper_${paper.name.lowercase()}"
-                                )
-                            }
-                        }
-
-                        Text("Orientation", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PageOrientation.entries.forEach { orient ->
-                                StudioChoiceChip(
-                                    label = orient.displayName,
-                                    selected = pdfOptions.orientation == orient,
-                                    onClick = { onUpdatePdfOptions { it.copy(orientation = orient) } },
-                                    testTag = "pdf_orient_${orient.name.lowercase()}",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        Text("Scale", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ScaleMode.entries.forEach { scale ->
-                                StudioChoiceChip(
-                                    label = scale.displayName,
-                                    selected = pdfOptions.scaleMode == scale,
-                                    onClick = { onUpdatePdfOptions { it.copy(scaleMode = scale) } },
-                                    testTag = "pdf_scale_${scale.name.lowercase()}",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        Text("Quality", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PrintQuality.entries.forEach { qual ->
-                                StudioChoiceChip(
-                                    label = qual.displayName,
-                                    selected = pdfOptions.quality == qual,
-                                    onClick = { onUpdatePdfOptions { it.copy(quality = qual) } },
-                                    testTag = "pdf_quality_${qual.name.lowercase()}",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                is StudioDocument.PhotoBatch -> {
-                    StudioSectionCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Photo Size & Sheet Layout", style = MaterialTheme.typography.titleMedium)
-                                val planSummary = buildString {
-                                    append(photoLayout.imagesPerPage.displayName)
-                                    append(" • ")
-                                    append(photoLayout.physicalSizePreset.displayName)
-                                    append(" • ")
-                                    append(photoLayout.paperSize.displayName)
-                                    photoSheetPlan?.let { append(" (${it.pages.size} sheet(s))") }
-                                }
-                                Text(
-                                    text = planSummary,
-                                    style = MonoTextStyle,
-                                    color = studio.mutedGraphite
-                                )
-                            }
-                        }
-
-                        Button(
-                            onClick = { showPhotoLayoutDialog = true },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = studio.activeAccentSoft,
-                                contentColor = studio.activeAccent
-                            ),
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        HorizontalDivider(color = studio.hairlineBorder)
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("open_photo_layout_studio_button")
+                                .navigationBarsPadding()
+                                .padding(horizontal = 24.dp, vertical = 16.dp)
                         ) {
-                            Icon(Icons.Filled.GridView, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.action_photo_layout))
-                        }
-
-                        CopiesStepperRow(
-                            copies = photoLayout.copies,
-                            onCopiesChange = { c -> onUpdatePhotoLayout(photoLayout.copy(copies = c)) }
-                        )
-                    }
-                }
-
-                else -> Unit
-            }
-
-            // 6. Primary Print Action / Live Band Streaming Progress
-            StudioSectionCard {
-                if (printProgress.isPrinting) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = printProgress.phaseLabel.ifBlank { "Streaming USB job..." },
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = PrintStudioViewModel.formatBytes(printProgress.bytesSent),
-                                style = MonoTextStyle,
-                                color = studio.activeAccent
+                            PrintActionContent(
+                                usbState = usbState,
+                                isUnsupportedPrinter = isUnsupportedPrinter,
+                                printProgress = printProgress,
+                                onStartPrint = onStartPrint,
+                                onCancelPrint = onCancelPrint
                             )
                         }
-                        val progressFraction = if (printProgress.totalBands > 0) {
-                            (printProgress.currentBand.toFloat() / printProgress.totalBands.toFloat()).coerceIn(0f, 1f)
-                        } else 0f
-                        LinearProgressIndicator(
-                            progress = { progressFraction },
-                            color = studio.activeAccent,
-                            trackColor = studio.secondaryContainer,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(MaterialTheme.shapes.extraSmall)
-                        )
-                        OutlinedButton(
-                            onClick = onCancelPrint,
-                            border = BorderStroke(1.dp, studio.crimson),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("cancel_print_button")
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = null, tint = studio.crimson)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(stringResource(R.string.action_cancel_print), color = studio.crimson)
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = onStartPrint,
-                        enabled = !isUnsupportedPrinter,
-                        colors = ButtonDefaults.buttonColors(containerColor = studio.primaryInk),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("print_now_button")
-                    ) {
-                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = when {
-                                isUnsupportedPrinter -> "Unsupported Language (Choose Override)"
-                                usbState is UsbPrinterState.PermissionRequired -> stringResource(R.string.action_grant_usb)
-                                else -> stringResource(R.string.action_print_now)
-                            },
-                            fontWeight = FontWeight.SemiBold
-                        )
                     }
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
-private val RoundedCornerShapeMinimal = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+@Composable
+private fun PrinterControlsHeaderSection(
+    usbState: UsbPrinterState,
+    effectiveMonochrome: Boolean,
+    testPageVerified: Boolean,
+    isUnsupportedPrinter: Boolean,
+    lastPrintError: String?,
+    isPrinting: Boolean,
+    onScanUsb: () -> Unit,
+    onGrantPermission: () -> Unit,
+    onOpenPrinterSettings: () -> Unit,
+    onDismissPrintError: () -> Unit,
+    onPrintTestPage: () -> Unit
+) {
+    val studio = LocalStudioColors.current
+
+    PrinterStatusHeaderCard(
+        usbState = usbState,
+        effectiveMonochrome = effectiveMonochrome,
+        testPageVerified = testPageVerified,
+        onScanUsb = onScanUsb,
+        onGrantPermission = onGrantPermission
+    )
+
+    if (isUnsupportedPrinter && usbState is UsbPrinterState.Ready) {
+        StudioSectionCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(studio.crimsonSoft)
+                    .padding(16.dp)
+                    .testTag("unsupported_printer_banner"),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Unsupported Printer Language",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = studio.crimson,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = usbState.profile.unverifiedLanguageWarning
+                        ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = studio.crimson
+                )
+                OutlinedButton(
+                    onClick = onOpenPrinterSettings,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, studio.crimson),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("unsupported_open_settings_button")
+                ) {
+                    Text("Select Manual Protocol Override", color = studio.crimson)
+                }
+            }
+        }
+    }
+
+    if (!lastPrintError.isNullOrBlank()) {
+        StudioSectionCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(studio.crimsonSoft)
+                    .padding(12.dp)
+                    .testTag("print_error_banner"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = lastPrintError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = studio.crimson,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onDismissPrintError,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("dismiss_print_error_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Dismiss print error",
+                        tint = studio.crimson
+                    )
+                }
+            }
+        }
+    }
+
+    if (usbState is UsbPrinterState.Ready && !isUnsupportedPrinter) {
+        OutlinedButton(
+            onClick = onPrintTestPage,
+            enabled = !isPrinting,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, studio.activeAccent),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("print_test_page_button")
+        ) {
+            Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.action_print_test_page))
+        }
+    }
+}
+
+@Composable
+private fun DocumentOptionsSection(
+    document: StudioDocument,
+    pdfOptions: PdfPrintOptions,
+    photoLayout: PhotoLayoutOptions,
+    photoSheetPlan: PhotoSheetPlan?,
+    onOpenPdfOptionsSheet: () -> Unit,
+    onOpenPhotoLayoutStudio: () -> Unit,
+    onUpdatePhotoLayout: (PhotoLayoutOptions) -> Unit
+) {
+    when (document) {
+        is StudioDocument.PdfDoc -> {
+            PdfOptionsSummaryCard(
+                pdfOptions = pdfOptions,
+                onOpenSheet = onOpenPdfOptionsSheet
+            )
+        }
+
+        is StudioDocument.PhotoBatch -> {
+            PhotoLayoutSummaryCard(
+                photoCount = document.items.size,
+                photoLayout = photoLayout,
+                photoSheetPlan = photoSheetPlan,
+                onOpenLayoutStudio = onOpenPhotoLayoutStudio,
+                onCopiesChange = { c -> onUpdatePhotoLayout(photoLayout.copy(copies = c)) }
+            )
+        }
+
+        else -> Unit
+    }
+}

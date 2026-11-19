@@ -4,6 +4,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -30,6 +31,8 @@ data class StudioSemanticColors(
 )
 
 val LocalStudioColors = staticCompositionLocalOf { StudioSemanticColors() }
+
+val LocalWindowWidthSizeClass = staticCompositionLocalOf { WindowWidthSizeClass.Compact }
 
 private val StudioLightColorScheme = lightColorScheme(
     primary = ActiveCobalt,
@@ -64,10 +67,10 @@ private val StudioLightColorScheme = lightColorScheme(
 )
 
 val StudioShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(16.dp),
     extraLarge = RoundedCornerShape(24.dp)
 )
 

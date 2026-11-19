@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">Universal USB Printer</string>
     <string name="tab_print_studio">Print Studio</string>
-    <string name="tab_printer_history">Printer &amp; History</string>
+    <string name="tab_printer_history">Printer</string>
     <string name="action_pick_photos">Pick Photos</string>
     <string name="action_open_pdf">Open PDF</string>
     <string name="action_diagnostic_sheet">Diagnostic Sheet</string>
@@ -27,8 +27,8 @@
     <string name="status_error">Printer Error</string>
     <string name="badge_color">Color</string>
     <string name="badge_mono">Mono</string>
-    <string name="empty_studio_title">Paper-White Print Studio</string>
-    <string name="empty_studio_subtitle">Load up to 20 photos, open a PDF document, or run a diagnostic test sheet. Ready for offline prep even before plugging in USB OTG.</string>
+    <string name="empty_studio_title">Nothing to print yet</string>
+    <string name="empty_studio_subtitle">Add photos or a PDF to see a preview.</string>
     <string name="empty_history_title">No Print Jobs Yet</string>
     <string name="empty_history_subtitle">Completed, cancelled, and failed USB print jobs appear here with exact byte and protocol logs.</string>
 </resources>

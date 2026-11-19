@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -50,7 +51,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.model.NormalizedCropRect
 import com.example.ui.theme.LocalStudioColors
-import com.example.ui.theme.MonoTextStyle
 import kotlin.math.hypot
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,48 +72,57 @@ fun CropAreaDialog(
         Scaffold(
             containerColor = studio.paperBackground,
             topBar = {
-                TopAppBar(
-                    title = { Text("Crop Area", style = MaterialTheme.typography.titleLarge) },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.testTag("crop_close_button")
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close crop editor")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = studio.cardSurface,
-                        titleContentColor = studio.primaryInk
+                Column {
+                    TopAppBar(
+                        expandedHeight = 52.dp,
+                        title = { Text("Crop Area", style = MaterialTheme.typography.titleLarge) },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.testTag("crop_close_button")
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Close crop editor")
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = studio.cardSurface,
+                            titleContentColor = studio.primaryInk
+                        )
                     )
-                )
+                    androidx.compose.material3.HorizontalDivider(color = studio.hairlineBorder)
+                }
             },
             bottomBar = {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(studio.cardSurface)
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { crop = NormalizedCropRect() },
+                Column(modifier = Modifier.background(studio.cardSurface)) {
+                    androidx.compose.material3.HorizontalDivider(color = studio.hairlineBorder)
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("crop_reset_button")
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Reset")
-                    }
-                    Button(
-                        onClick = { onApply(crop.normalized()) },
-                        colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("crop_apply_button")
-                    ) {
-                        Text("Apply Crop")
+                        OutlinedButton(
+                            onClick = { crop = NormalizedCropRect() },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("crop_reset_button")
+                        ) {
+                            Text("Reset")
+                        }
+                        Button(
+                            onClick = { onApply(crop.normalized()) },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("crop_apply_button")
+                        ) {
+                            Text("Apply Crop")
+                        }
                     }
                 }
             }
@@ -122,7 +131,7 @@ fun CropAreaDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(16.dp),
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
@@ -259,7 +268,7 @@ fun CropAreaDialog(
                 val pctH = ((crop.bottom - crop.top) * 100).toInt()
                 Text(
                     text = "Selection: $pctW% × $pctH%",
-                    style = MonoTextStyle,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = studio.primaryInk
                 )
             }

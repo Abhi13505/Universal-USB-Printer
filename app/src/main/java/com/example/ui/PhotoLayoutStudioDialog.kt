@@ -1,34 +1,31 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -67,9 +63,10 @@ import com.example.model.PhotoLayoutOptions
 import com.example.model.PhysicalPhotoSizePreset
 import com.example.model.PrintQuality
 import com.example.ui.theme.LocalStudioColors
-import com.example.ui.theme.MonoTextStyle
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private val ControlCornerShape = RoundedCornerShape(12.dp)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotoLayoutStudioDialog(
     photoCount: Int,
@@ -96,49 +93,59 @@ fun PhotoLayoutStudioDialog(
         Scaffold(
             containerColor = studio.paperBackground,
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("Photo Size & Layout Studio", style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                text = "${livePlan.columns}×${livePlan.rows} grid • ${livePlan.pages.size} sheet(s) • ${draft.paperSize.displayName}",
-                                style = MonoTextStyle,
-                                color = studio.mutedGraphite
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.testTag("photo_layout_close_button")
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close layout studio")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = studio.cardSurface,
-                        titleContentColor = studio.primaryInk
+                Column {
+                    TopAppBar(
+                        expandedHeight = 52.dp,
+                        title = {
+                            val sheets = livePlan.pages.size
+                            val sheetText = if (sheets == 1) "1 sheet" else "$sheets sheets"
+                            Column {
+                                Text("Photo Size & Layout", style = MaterialTheme.typography.titleLarge)
+                                Text(
+                                    text = "${livePlan.columns}×${livePlan.rows} grid · $sheetText · ${draft.paperSize.displayName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = studio.mutedGraphite
+                                )
+                            }
+                        },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.testTag("photo_layout_close_button")
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Close layout studio")
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = studio.cardSurface,
+                            titleContentColor = studio.primaryInk
+                        )
                     )
-                )
+                    HorizontalDivider(color = studio.hairlineBorder)
+                }
             },
             bottomBar = {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(studio.cardSurface)
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Button(
-                        onClick = { onApply(draft) },
-                        colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
+                Column(modifier = Modifier.background(studio.cardSurface)) {
+                    HorizontalDivider(color = studio.hairlineBorder)
+                    Row(
                         modifier = Modifier
-                            .widthIn(max = 600.dp)
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("photo_layout_apply_button")
+                            .navigationBarsPadding()
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Text("Apply Sheet Layout")
+                        Button(
+                            onClick = { onApply(draft) },
+                            shape = ControlCornerShape,
+                            colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
+                            modifier = Modifier
+                                .widthIn(max = 600.dp)
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("photo_layout_apply_button")
+                        ) {
+                            Text("Apply Sheet Layout")
+                        }
                     }
                 }
             }
@@ -148,13 +155,13 @@ fun PhotoLayoutStudioDialog(
                     .fillMaxSize()
                     .padding(innerPadding)
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Column(
                     modifier = Modifier.widthIn(max = 600.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // Live Sheet Blueprint Diagram
                     StudioSectionCard {
@@ -168,7 +175,7 @@ fun PhotoLayoutStudioDialog(
                             if (firstCell != null) {
                                 Text(
                                     text = "Cell ${firstCell.widthMm.toInt()}×${firstCell.heightMm.toInt()} mm",
-                                    style = MonoTextStyle,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = studio.activeAccent
                                 )
                             }
@@ -177,7 +184,7 @@ fun PhotoLayoutStudioDialog(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.small)
+                                .clip(ControlCornerShape)
                                 .background(studio.elevatedSurface)
                                 .padding(16.dp),
                             contentAlignment = Alignment.Center
@@ -193,7 +200,6 @@ fun PhotoLayoutStudioDialog(
                                 val scaleX = size.width / livePlan.paperWidthMm
                                 val scaleY = size.height / livePlan.paperHeightMm
 
-                                // Printable margin guide
                                 val m = livePlan.marginMm
                                 if (m > 0f) {
                                     drawRect(
@@ -210,7 +216,6 @@ fun PhotoLayoutStudioDialog(
                                     )
                                 }
 
-                                // Cell slots
                                 livePlan.cells.forEachIndexed { idx, cell ->
                                     val x = cell.leftMm * scaleX
                                     val y = cell.topMm * scaleY
@@ -249,19 +254,15 @@ fun PhotoLayoutStudioDialog(
 
                     // Images Per Page + Toggles
                     StudioSectionCard {
-                        Text("Images per Page", style = MaterialTheme.typography.titleMedium)
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ImagesPerPageOption.entries.forEach { opt ->
-                                StudioChoiceChip(
-                                    label = opt.displayName,
-                                    selected = draft.imagesPerPage == opt,
-                                    onClick = { draft = draft.copy(imagesPerPage = opt) },
-                                    testTag = "layout_per_page_${opt.name.lowercase()}"
-                                )
-                            }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Images per Page", style = MaterialTheme.typography.titleMedium)
+                            SegmentedChipRow(
+                                options = ImagesPerPageOption.entries,
+                                selected = draft.imagesPerPage,
+                                label = { it.displayName },
+                                testTag = { "layout_per_page_${it.name.lowercase()}" },
+                                onSelect = { opt -> draft = draft.copy(imagesPerPage = opt) }
+                            )
                         }
 
                         Row(
@@ -301,98 +302,88 @@ fun PhotoLayoutStudioDialog(
 
                     // Physical Photo Size Presets
                     StudioSectionCard {
-                        Text("Physical Photo Size", style = MaterialTheme.typography.titleMedium)
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            PhysicalPhotoSizePreset.entries.forEach { preset ->
-                                StudioChoiceChip(
-                                    label = preset.displayName,
-                                    selected = draft.physicalSizePreset == preset,
-                                    onClick = { draft = draft.copy(physicalSizePreset = preset) },
-                                    testTag = "layout_size_${preset.name.lowercase()}"
-                                )
-                            }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Physical Photo Size", style = MaterialTheme.typography.titleMedium)
+                            SegmentedChipRow(
+                                options = PhysicalPhotoSizePreset.entries,
+                                selected = draft.physicalSizePreset,
+                                label = { it.displayName },
+                                testTag = { "layout_size_${it.name.lowercase()}" },
+                                onSelect = { preset -> draft = draft.copy(physicalSizePreset = preset) }
+                            )
                         }
                     }
 
                     // Gaps, Margins, Cut Guides, and 3x3 Position Pad
                     StudioSectionCard {
                         Text("Gaps & Margins", style = MaterialTheme.typography.titleMedium)
-                        Text("Gaps", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            GapPreset.entries.forEach { gap ->
-                                StudioChoiceChip(
-                                    label = gap.displayName,
-                                    selected = draft.gapPreset == gap,
-                                    onClick = { draft = draft.copy(gapPreset = gap) },
-                                    testTag = "layout_gap_${gap.name.lowercase()}"
-                                )
-                            }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Gaps", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = GapPreset.entries,
+                                selected = draft.gapPreset,
+                                label = { it.displayName },
+                                testTag = { "layout_gap_${it.name.lowercase()}" },
+                                onSelect = { gap -> draft = draft.copy(gapPreset = gap) }
+                            )
                         }
 
-                        Text("Margins", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            MarginPreset.entries.forEach { margin ->
-                                StudioChoiceChip(
-                                    label = margin.displayName,
-                                    selected = draft.marginPreset == margin,
-                                    onClick = { draft = draft.copy(marginPreset = margin) },
-                                    testTag = "layout_margin_${margin.name.lowercase()}"
-                                )
-                            }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Margins", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = MarginPreset.entries,
+                                selected = draft.marginPreset,
+                                label = { it.displayName },
+                                testTag = { "layout_margin_${it.name.lowercase()}" },
+                                onSelect = { margin -> draft = draft.copy(marginPreset = margin) }
+                            )
                         }
 
-                        Text("Cut Guides", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CutGuideStyle.entries.forEach { guide ->
-                                StudioChoiceChip(
-                                    label = guide.displayName,
-                                    selected = draft.cutGuideStyle == guide,
-                                    onClick = { draft = draft.copy(cutGuideStyle = guide) },
-                                    testTag = "layout_cut_${guide.name.lowercase()}"
-                                )
-                            }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Cut Guides", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = CutGuideStyle.entries,
+                                selected = draft.cutGuideStyle,
+                                label = { it.displayName },
+                                testTag = { "layout_cut_${it.name.lowercase()}" },
+                                onSelect = { guide -> draft = draft.copy(cutGuideStyle = guide) }
+                            )
                         }
 
-                        Text("3×3 Sheet Position Pad", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            for (r in 0..2) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    for (c in 0..2) {
-                                        val anchor = AnchorPosition.entries.first { it.row == r && it.col == c }
-                                        val selected = draft.anchorPosition == anchor
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(MaterialTheme.shapes.small)
-                                                .background(if (selected) studio.activeAccent else studio.secondaryContainer)
-                                                .border(
-                                                    1.dp,
-                                                    if (selected) studio.activeAccent else studio.hairlineBorder,
-                                                    MaterialTheme.shapes.small
-                                                )
-                                                .clickable { draft = draft.copy(anchorPosition = anchor) }
-                                                .testTag("layout_anchor_${anchor.name.lowercase()}"),
-                                            contentAlignment = Alignment.Center
-                                        ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("3×3 Sheet Position Pad", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                for (r in 0..2) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        for (c in 0..2) {
+                                            val anchor = AnchorPosition.entries.first { it.row == r && it.col == c }
+                                            val selected = draft.anchorPosition == anchor
                                             Box(
                                                 modifier = Modifier
-                                                    .size(10.dp)
-                                                    .clip(MaterialTheme.shapes.extraSmall)
-                                                    .background(if (selected) Color.White else studio.mutedGraphite)
-                                            )
+                                                    .size(48.dp)
+                                                    .clip(ControlCornerShape)
+                                                    .background(if (selected) studio.activeAccent else studio.secondaryContainer)
+                                                    .border(
+                                                        1.dp,
+                                                        if (selected) studio.activeAccent else studio.hairlineBorder,
+                                                        ControlCornerShape
+                                                    )
+                                                    .clickable { draft = draft.copy(anchorPosition = anchor) }
+                                                    .testTag("layout_anchor_${anchor.name.lowercase()}"),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(if (selected) Color.White else studio.mutedGraphite)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -403,39 +394,40 @@ fun PhotoLayoutStudioDialog(
                     // Paper, Orientation, Quality, Copies
                     StudioSectionCard {
                         Text("Sheet & Output Settings", style = MaterialTheme.typography.titleMedium)
-                        Text("Paper Size", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PaperSize.entries.forEach { paper ->
-                                StudioChoiceChip(
-                                    label = paper.displayName,
-                                    selected = draft.paperSize == paper,
-                                    onClick = { draft = draft.copy(paperSize = paper) },
-                                    testTag = "layout_paper_${paper.name.lowercase()}"
-                                )
-                            }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Paper Size", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = PaperSize.entries,
+                                selected = draft.paperSize,
+                                label = { it.displayName },
+                                testTag = { "layout_paper_${it.name.lowercase()}" },
+                                onSelect = { paper -> draft = draft.copy(paperSize = paper) }
+                            )
                         }
-                        Text("Orientation", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PageOrientation.entries.forEach { orient ->
-                                StudioChoiceChip(
-                                    label = orient.displayName,
-                                    selected = draft.orientation == orient,
-                                    onClick = { draft = draft.copy(orientation = orient) },
-                                    testTag = "layout_orient_${orient.name.lowercase()}"
-                                )
-                            }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Orientation", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = PageOrientation.entries,
+                                selected = draft.orientation,
+                                label = { it.displayName },
+                                testTag = { "layout_orient_${it.name.lowercase()}" },
+                                onSelect = { orient -> draft = draft.copy(orientation = orient) }
+                            )
                         }
-                        Text("Quality", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PrintQuality.entries.forEach { qual ->
-                                StudioChoiceChip(
-                                    label = qual.displayName,
-                                    selected = draft.quality == qual,
-                                    onClick = { draft = draft.copy(quality = qual) },
-                                    testTag = "layout_quality_${qual.name.lowercase()}"
-                                )
-                            }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Quality", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                            SegmentedChipRow(
+                                options = PrintQuality.entries,
+                                selected = draft.quality,
+                                label = { it.displayName },
+                                testTag = { "layout_quality_${it.name.lowercase()}" },
+                                onSelect = { qual -> draft = draft.copy(quality = qual) }
+                            )
                         }
+
                         CopiesStepperRow(
                             copies = draft.copies,
                             onCopiesChange = { draft = draft.copy(copies = it) }

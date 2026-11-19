@@ -7,7 +7,7 @@ val PaperWhite = Color(0xFFFAF9F6)
 val CardSurface = Color(0xFFFFFFFF)
 val SecondaryContainer = Color(0xFFF2F0EC)
 val ElevatedSurface = Color(0xFFEBE8E1)
-val HairlineBorder = Color(0xFFE2DFD9)
+val HairlineBorder = Color(0xFFECEAE4)
 
 val PrimaryInk = Color(0xFF141414)
 val MutedGraphite = Color(0xFF6B6760)

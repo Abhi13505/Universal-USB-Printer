@@ -1,12 +1,9 @@
 package com.example.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
@@ -49,14 +47,14 @@ import com.example.model.DriverProtocol
 import com.example.model.PrintJobStatus
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
-import com.example.ui.theme.MonoTextStyle
 import com.example.usb.PrinterCapabilityResolver
 import com.example.viewmodel.PrintStudioViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalLayoutApi::class)
+private val ControlCornerShape = RoundedCornerShape(12.dp)
+
 @Composable
 fun PrinterHistoryScreen(
     usbState: UsbPrinterState,
@@ -79,8 +77,8 @@ fun PrinterHistoryScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // 1. Technical USB Hardware Diagnostics & Override Card
         StudioSectionCard {
@@ -119,6 +117,7 @@ fun PrinterHistoryScreen(
                     )
                     Button(
                         onClick = onGrantPermission,
+                        shape = ControlCornerShape,
                         colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -154,9 +153,9 @@ fun PrinterHistoryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.small)
+                                .clip(ControlCornerShape)
                                 .background(studio.crimsonSoft)
-                                .padding(10.dp)
+                                .padding(12.dp)
                         ) {
                             Icon(Icons.Filled.Warning, contentDescription = null, tint = studio.crimson, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -171,9 +170,9 @@ fun PrinterHistoryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.small)
+                                .clip(ControlCornerShape)
                                 .background(studio.amberSoft)
-                                .padding(10.dp)
+                                .padding(12.dp)
                         ) {
                             Icon(Icons.Filled.Warning, contentDescription = null, tint = studio.amber, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -185,25 +184,32 @@ fun PrinterHistoryScreen(
                         }
                     }
 
-                    TelemetryLine("Printer", profile.makeAndModel)
-                    TelemetryLine("USB VID:PID", info.vidPidKey)
-                    TelemetryLine("Active Interface", profile.activeInterfaceLabel)
-                    TelemetryLine("Resolved Driver", profile.effectiveProtocol.displayName)
-                    TelemetryLine(
-                        "Test Page Status",
-                        when {
-                            isHardwareVerified -> "Hardware-verified (SCX-3200)"
-                            override.testPageVerified -> "1-inch test page verified"
-                            else -> "Required before first full job"
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TelemetryLine("Printer", profile.makeAndModel)
+                        TelemetryLine("USB VID:PID", info.vidPidKey)
+                        TelemetryLine("Active Interface", profile.activeInterfaceLabel)
+                        TelemetryLine("Resolved Driver", profile.effectiveProtocol.displayName)
+                        TelemetryLine(
+                            "Test Page Status",
+                            when {
+                                isHardwareVerified -> "Hardware-verified (SCX-3200)"
+                                override.testPageVerified -> "1-inch test page verified"
+                                else -> "Required before first full job"
+                            }
+                        )
+                        TelemetryLine(
+                            "IEEE 1284 CMD",
+                            ieee.commandSetTokens.joinToString(", ").ifBlank { "(none)" }
+                        )
+                        usbState.ipp?.let { ipp ->
+                            if (ipp.documentFormatsSupported.isNotEmpty()) {
+                                TelemetryLine("IPP Formats", ipp.documentFormatsSupported.joinToString(", "))
+                            }
                         }
-                    )
-                    TelemetryLine(
-                        "IEEE 1284 CMD",
-                        ieee.commandSetTokens.joinToString(", ").ifBlank { "(none)" }
-                    )
+                    }
 
                     ieee.portStatus?.let { flags ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatusBadgePill(
                                 label = if (flags.selected) "Selected" else "Offline",
                                 textColor = if (flags.selected) studio.emerald else studio.amber,
@@ -222,15 +228,10 @@ fun PrinterHistoryScreen(
                         }
                     }
 
-                    usbState.ipp?.let { ipp ->
-                        if (ipp.documentFormatsSupported.isNotEmpty()) {
-                            TelemetryLine("IPP Formats", ipp.documentFormatsSupported.joinToString(", "))
-                        }
-                    }
-
                     Button(
                         onClick = onPrintTestPage,
                         enabled = !isUnsupported && !isPrinting,
+                        shape = ControlCornerShape,
                         colors = ButtonDefaults.buttonColors(containerColor = studio.primaryInk),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -242,22 +243,24 @@ fun PrinterHistoryScreen(
                         Text(stringResource(R.string.action_print_test_page))
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = onSoftReset,
+                            shape = ControlCornerShape,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
                                 .testTag("soft_reset_button")
                         ) {
                             Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(stringResource(R.string.action_soft_reset))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.action_soft_reset), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
 
                         Button(
                             onClick = onPrintDiagnosticSheet,
                             enabled = !isUnsupported && !isPrinting,
+                            shape = ControlCornerShape,
                             colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
                             modifier = Modifier
                                 .weight(1f)
@@ -265,46 +268,40 @@ fun PrinterHistoryScreen(
                                 .testTag("print_diagnostic_sheet_button")
                         ) {
                             Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Test Sheet")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Test Sheet", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
 
                     HorizontalDivider(color = studio.hairlineBorder)
 
                     // Per-VID:PID Manual Protocol & Color Overrides (persisted in DataStore)
-                    Text(
-                        text = "Manual Driver Override (${info.vidPidKey})",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        DriverProtocol.manualSelectableEntries.forEach { proto ->
-                            StudioChoiceChip(
-                                label = proto.displayName,
-                                selected = override.protocolOverride == proto,
-                                onClick = { onSelectProtocolOverride(proto) },
-                                testTag = "override_proto_${proto.name.lowercase()}"
-                            )
-                        }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Manual Driver Override (${info.vidPidKey})",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        SegmentedChipRow(
+                            options = DriverProtocol.manualSelectableEntries,
+                            selected = override.protocolOverride,
+                            label = { it.displayName },
+                            testTag = { "override_proto_${it.name.lowercase()}" },
+                            onSelect = onSelectProtocolOverride
+                        )
                     }
 
-                    Text(
-                        text = "Color Capability Override (${info.vidPidKey})",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ColorOverrideMode.entries.forEach { mode ->
-                            StudioChoiceChip(
-                                label = mode.displayName,
-                                selected = override.colorOverride == mode,
-                                onClick = { onSelectColorOverride(mode) },
-                                testTag = "override_color_${mode.name.lowercase()}",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Color Capability Override (${info.vidPidKey})",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        SegmentedChipRow(
+                            options = ColorOverrideMode.entries,
+                            selected = override.colorOverride,
+                            label = { it.displayName },
+                            testTag = { "override_color_${it.name.lowercase()}" },
+                            onSelect = onSelectColorOverride
+                        )
                     }
                 }
             }
@@ -338,7 +335,7 @@ fun PrinterHistoryScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
+                        .clip(ControlCornerShape)
                         .background(studio.secondaryContainer)
                         .padding(16.dp),
                     contentAlignment = Alignment.Center
@@ -350,16 +347,18 @@ fun PrinterHistoryScreen(
                     )
                 }
             } else {
-                history.forEachIndexed { idx, entry ->
-                    PrintHistoryRow(entry = entry)
-                    if (idx < history.lastIndex) {
-                        HorizontalDivider(color = studio.hairlineBorder)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    history.forEachIndexed { idx, entry ->
+                        PrintHistoryRow(entry = entry)
+                        if (idx < history.lastIndex) {
+                            HorizontalDivider(color = studio.hairlineBorder)
+                        }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
     }
 }
 
@@ -379,7 +378,8 @@ private fun TelemetryLine(label: String, value: String) {
         )
         Text(
             text = value,
-            style = MonoTextStyle,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
             color = studio.primaryInk,
             modifier = Modifier.weight(1f)
         )
@@ -396,11 +396,13 @@ private fun PrintHistoryRow(entry: PrintHistoryEntity) {
     }
     val formattedDate = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
         .format(Date(entry.timestampMillis))
+    val pageText = if (entry.pageCount == 1) "1 page" else "${entry.pageCount} pages"
+    val copyText = if (entry.copies == 1) "1 copy" else "${entry.copies} copies"
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(
@@ -420,13 +422,13 @@ private fun PrintHistoryRow(entry: PrintHistoryEntity) {
             StatusBadgePill(label = entry.status, textColor = badgeColor, backgroundColor = badgeBg)
         }
         Text(
-            text = "$formattedDate • ${entry.pageCount}p × ${entry.copies} • ${entry.paperSize} • ${entry.colorMode}",
-            style = MonoTextStyle,
+            text = "$formattedDate · $pageText · $copyText · ${entry.paperSize} · ${entry.colorMode}",
+            style = MaterialTheme.typography.bodySmall,
             color = studio.mutedGraphite
         )
         Text(
-            text = "${entry.resolvedProtocol} • ${PrintStudioViewModel.formatBytes(entry.bytesSent)}",
-            style = MonoTextStyle,
+            text = "${entry.resolvedProtocol} · ${PrintStudioViewModel.formatBytes(entry.bytesSent)}",
+            style = MaterialTheme.typography.bodySmall,
             color = studio.mutedGraphite
         )
     }
