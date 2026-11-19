@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import kotlin.math.roundToInt
 
 object IppUsbEncoder {
 
@@ -20,13 +21,30 @@ object IppUsbEncoder {
     enum class PwgColorMode(
         val bitsPerColor: Int,
         val bitsPerPixel: Int,
-        val colorSpace: Int
+        val colorSpace: Int,
+        val numColors: Int
     ) {
-        SRGB_24(8, 24, PWG_COLOR_SPACE_SRGB),
-        SGRAY_8(8, 8, PWG_COLOR_SPACE_SGRAY),
-        BLACK_1(1, 1, PWG_COLOR_SPACE_BLACK)
+        SRGB_24(8, 24, PWG_COLOR_SPACE_SRGB, 3),
+        SGRAY_8(8, 8, PWG_COLOR_SPACE_SGRAY, 1),
+        BLACK_1(1, 1, PWG_COLOR_SPACE_BLACK, 1)
     }
 
+    /**
+     * Builds a PWG 5102.4 Table 4 compliant 1,796-byte big-endian Page Header:
+     * - 0..63: PwgRaster ("PwgRaster")
+     * - 128..191: MediaType (e.g. "stationery")
+     * - 192..255: PrintContentOptimize (e.g. "auto")
+     * - 276..283: HWResolution (dpiX, dpiY)
+     * - 340..343: NumCopies
+     * - 352..359: PageSize in points (1/72 inch): widthPt at 352, heightPt at 356
+     * - 372..379: Width (372), Height (376) in pixels
+     * - 384..403: BitsPerColor (384), BitsPerPixel (388), BytesPerLine (392), ColorOrder (396), ColorSpace (400)
+     * - 420..423: NumColors (420)
+     * - 452..479: TotalPageCount (452), CrossFeedTransform (456), FeedTransform (460), ImageBox (464..479)
+     * - 480..483: AlternatePrimary (0x00FFFFFF)
+     * - 1668..1731: RenderingIntent ("auto")
+     * - 1732..1795: PageSizeName (PWG media keyword, e.g. "iso_a4_210x297mm")
+     */
     fun buildPwgRasterPageHeader(
         widthPx: Int,
         heightPx: Int,
@@ -34,7 +52,9 @@ object IppUsbEncoder {
         dpiY: Int,
         colorMode: PwgColorMode,
         mediaName: String,
-        totalPages: Int = 1
+        totalPages: Int = 1,
+        mediaType: String = "stationery",
+        numCopies: Int = 1
     ): ByteArray {
         val buf = ByteBuffer.allocate(PWG_HEADER_SIZE).order(ByteOrder.BIG_ENDIAN)
         val bytesPerLine = when (colorMode) {
@@ -44,26 +64,39 @@ object IppUsbEncoder {
         }
 
         // Bytes 0..63: PwgRaster magic string
-        val magic = "PwgRaster".toByteArray(StandardCharsets.US_ASCII)
         buf.position(0)
-        buf.put(magic)
+        buf.put("PwgRaster".toByteArray(StandardCharsets.US_ASCII))
 
-        // Bytes 64..127: MediaColor / MediaType / MediaClass -> media name at 284 if needed; MediaPosition=0
-        val mediaBytes = mediaName.take(63).toByteArray(StandardCharsets.US_ASCII)
-        buf.position(192) // MediaType / MediaClass
-        buf.put(mediaBytes)
+        // Bytes 128..191: MediaType (64-byte nul-terminated ASCII)
+        buf.position(128)
+        buf.put(mediaType.take(63).toByteArray(StandardCharsets.US_ASCII))
 
-        // HWResolution at 276 (2 x uint32 BE)
+        // Bytes 192..255: PrintContentOptimize (64-byte nul-terminated ASCII)
+        buf.position(192)
+        buf.put("auto".toByteArray(StandardCharsets.US_ASCII))
+
+        // Bytes 276..283: HWResolution (2 x uint32 BE)
         buf.position(276)
         buf.putInt(dpiX)
         buf.putInt(dpiY)
 
-        // cupsWidth, cupsHeight at 372, 376
+        // Bytes 340..343: NumCopies (uint32 BE)
+        buf.position(340)
+        buf.putInt(numCopies.coerceAtLeast(1))
+
+        // Bytes 352..359: PageSize in points (1/72 inch, 2 x uint32 BE)
+        val pageWidthPt = ((widthPx * 72.0) / dpiX.coerceAtLeast(1)).roundToInt()
+        val pageHeightPt = ((heightPx * 72.0) / dpiY.coerceAtLeast(1)).roundToInt()
+        buf.position(352)
+        buf.putInt(pageWidthPt)
+        buf.putInt(pageHeightPt)
+
+        // Bytes 372..379: Width, Height in pixels
         buf.position(372)
         buf.putInt(widthPx)
         buf.putInt(heightPx)
 
-        // cupsBitsPerColor (384), cupsBitsPerPixel (388), cupsBytesPerLine (392), cupsColorOrder (396), cupsColorSpace (400)
+        // Bytes 384..403: BitsPerColor (384), BitsPerPixel (388), BytesPerLine (392), ColorOrder (396), ColorSpace (400)
         buf.position(384)
         buf.putInt(colorMode.bitsPerColor)
         buf.putInt(colorMode.bitsPerPixel)
@@ -71,17 +104,32 @@ object IppUsbEncoder {
         buf.putInt(0) // Chunky
         buf.putInt(colorMode.colorSpace)
 
-        // TotalPageCount (420), CrossFeedTransform (424), FeedTransform (428)
+        // Bytes 420..423: NumColors
         buf.position(420)
+        buf.putInt(colorMode.numColors)
+
+        // Bytes 452..463: TotalPageCount (452), CrossFeedTransform (456), FeedTransform (460)
+        buf.position(452)
         buf.putInt(totalPages)
         buf.putInt(1)
         buf.putInt(1)
 
-        // ImageBoxLeft/Top/Right/Bottom (432..447)
+        // Bytes 464..479: ImageBoxLeft/Top/Right/Bottom
         buf.putInt(0)
         buf.putInt(0)
         buf.putInt(widthPx)
         buf.putInt(heightPx)
+
+        // Bytes 480..483: AlternatePrimary (white = 0x00FFFFFF)
+        buf.putInt(0x00FFFFFF)
+
+        // Bytes 1668..1731: RenderingIntent
+        buf.position(1668)
+        buf.put("auto".toByteArray(StandardCharsets.US_ASCII))
+
+        // Bytes 1732..1795: PageSizeName (PWG self-describing media size name)
+        buf.position(1732)
+        buf.put(mediaName.take(63).toByteArray(StandardCharsets.US_ASCII))
 
         return buf.array()
     }
@@ -89,7 +137,7 @@ object IppUsbEncoder {
     class PwgStreamSession(
         private val transport: UsbByteTransport,
         jobName: String,
-        copies: Int,
+        private val copies: Int,
         mediaKeyword: String
     ) {
         private var headerSent = false
@@ -129,7 +177,8 @@ object IppUsbEncoder {
                 dpiY = dpiY,
                 colorMode = colorMode,
                 mediaName = paperSize.pwgMediaName,
-                totalPages = totalPages
+                totalPages = totalPages,
+                numCopies = copies
             )
             writeChunk(pageHeader)
         }
@@ -190,7 +239,7 @@ object IppUsbEncoder {
         fun finish() {
             if (headerSent) {
                 transport.write(IppProtocolCodec.encodeHttpFinalChunk())
-                transport.read(4096, 1500) // drain HTTP/IPP response if available
+                IppProtocolCodec.readAndVerifyPrintJobResponse(transport)
             }
         }
 
@@ -229,6 +278,6 @@ object IppUsbEncoder {
         }
 
         transport.write(IppProtocolCodec.encodeHttpFinalChunk())
-        transport.read(4096, 1500)
+        IppProtocolCodec.readAndVerifyPrintJobResponse(transport)
     }
 }

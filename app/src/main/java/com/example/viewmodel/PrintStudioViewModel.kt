@@ -117,6 +117,9 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
+    private val _showFallbackConfirmDialog = MutableStateFlow(false)
+    val showFallbackConfirmDialog: StateFlow<Boolean> = _showFallbackConfirmDialog.asStateFlow()
+
     private var previewJob: Job? = null
     private var printJob: Job? = null
     private var overrideObserverJob: Job? = null
@@ -487,7 +490,38 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _snackbarMessage.value = "Select photos, open a PDF, or load a Diagnostic Sheet first."
             return
         }
+        // Prevent wasted paper on host-based/unverified fallback printers by asking first
+        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+            _showFallbackConfirmDialog.value = true
+            return
+        }
         executePrintDocument(_document.value, state)
+    }
+
+    fun dismissFallbackConfirmDialog() {
+        _showFallbackConfirmDialog.value = false
+    }
+
+    fun confirmFallbackAndPrint() {
+        _showFallbackConfirmDialog.value = false
+        val state = usbState.value as? UsbPrinterState.Ready ?: return
+        val doc = _document.value
+        if (doc is StudioDocument.Empty) return
+        viewModelScope.launch {
+            preferencesStore.setProtocolOverride(state.deviceInfo.vidPidKey, state.profile.effectiveProtocol)
+        }
+        executePrintDocument(doc, state)
+    }
+
+    fun printTinyProbeFromFallback() {
+        _showFallbackConfirmDialog.value = false
+        val state = usbState.value as? UsbPrinterState.Ready ?: return
+        executeTinyProbeJob(state)
+    }
+
+    fun openPrinterSettingsFromFallback() {
+        _showFallbackConfirmDialog.value = false
+        _activeTab.value = AppTab.PRINTER_HISTORY
     }
 
     fun printDiagnosticSheetNow() {
@@ -500,11 +534,71 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _snackbarMessage.value = "Connect a USB OTG printer to print the diagnostic sheet."
             return
         }
+        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+            _document.value = StudioDocument.DiagnosticSheet
+            _showFallbackConfirmDialog.value = true
+            return
+        }
         executePrintDocument(StudioDocument.DiagnosticSheet, state)
     }
 
     fun cancelPrint() {
         printJob?.cancel()
+    }
+
+    private fun executeTinyProbeJob(state: UsbPrinterState.Ready) {
+        if (_printProgress.value.isPrinting) return
+        val bytesCounter = AtomicLong(0L)
+        val protocol = state.profile.effectiveProtocol
+        val opened = usbPrinterManager.openPrintTransport(protocol) { written ->
+            val curr = bytesCounter.addAndGet(written.toLong())
+            _printProgress.value = _printProgress.value.copy(bytesSent = curr)
+        }
+        if (opened == null) {
+            _snackbarMessage.value = "Failed to claim USB printer interface."
+            return
+        }
+        val (transport, cleanup) = opened
+        val effectiveMono = isEffectiveMonochrome()
+
+        printJob = viewModelScope.launch(Dispatchers.IO) {
+            var status = PrintJobStatus.COMPLETED
+            try {
+                PrintJobStreamer.streamTinyProbeJob(
+                    transport = transport,
+                    printerName = state.profile.makeAndModel,
+                    protocol = protocol,
+                    effectiveMonochrome = effectiveMono,
+                    paperSize = PaperSize.A4,
+                    onProgress = { prog ->
+                        _printProgress.value = prog.copy(bytesSent = bytesCounter.get())
+                    }
+                )
+                _snackbarMessage.value =
+                    "1-band probe sent (${formatBytes(bytesCounter.get())}). If it printed cleanly, confirm the language to print your full job."
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                status = PrintJobStatus.CANCELLED
+                _snackbarMessage.value = "Probe cancelled."
+            } catch (e: Exception) {
+                status = PrintJobStatus.FAILED
+                _snackbarMessage.value = "Probe failed: ${e.message}"
+            } finally {
+                cleanup()
+                historyRepo.recordJob(
+                    PrintHistoryEntity(
+                        documentTitle = "1-Band Protocol Probe",
+                        pageCount = 1,
+                        copies = 1,
+                        paperSize = PaperSize.A4.displayName,
+                        resolvedProtocol = "${protocol.displayName} (Probe)",
+                        colorMode = if (effectiveMono) "Monochrome" else "Color",
+                        bytesSent = bytesCounter.get(),
+                        status = status.displayName
+                    )
+                )
+                _printProgress.value = PrintJobProgress()
+            }
+        }
     }
 
     private fun executePrintDocument(doc: StudioDocument, state: UsbPrinterState.Ready) {

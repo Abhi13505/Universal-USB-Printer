@@ -82,6 +82,12 @@ class UniversalUsbPrintService : PrintService() {
             printJob.fail(reason)
             return
         }
+        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+            printJob.fail(
+                "Printer language (${state.profile.effectiveProtocol.shortCode}) is an unverified fallback. Open Universal USB Printer once to run a 1-band probe or confirm the language so paper is not wasted."
+            )
+            return
+        }
 
         val spooledFd = printJob.document.data
         if (spooledFd == null) {

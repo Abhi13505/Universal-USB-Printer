@@ -3,12 +3,15 @@ package com.example
 import com.example.encoder.IppUsbEncoder
 import com.example.encoder.PackBitsEncoder
 import com.example.usb.IppProtocolCodec
+import com.example.usb.UsbByteTransport
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
@@ -57,7 +60,7 @@ class IppAndPwgRasterTest {
     }
 
     @Test
-    fun `buildPwgRasterPageHeader creates exact 1796-byte big-endian PWG 5102_4 header`() {
+    fun `buildPwgRasterPageHeader creates exact 1796-byte PWG 5102_4 Table 4 header`() {
         val hdr = IppUsbEncoder.buildPwgRasterPageHeader(
             widthPx = 4960,
             heightPx = 7016,
@@ -69,14 +72,88 @@ class IppAndPwgRasterTest {
         )
         assertEquals(1796, hdr.size)
         val buf = ByteBuffer.wrap(hdr).order(ByteOrder.BIG_ENDIAN)
+
+        // MediaType at 128..191 = "stationery"
+        val mediaTypeStr = String(hdr, 128, "stationery".length, StandardCharsets.US_ASCII)
+        assertEquals("stationery", mediaTypeStr)
+
+        // PrintContentOptimize at 192..255 = "auto"
+        val optimizeStr = String(hdr, 192, "auto".length, StandardCharsets.US_ASCII)
+        assertEquals("auto", optimizeStr)
+
+        // HWResolution at 276, 280
         assertEquals(600, buf.getInt(276))
         assertEquals(600, buf.getInt(280))
+
+        // PageSize in points at 352, 356 (4960 * 72 / 600 = 595, 7016 * 72 / 600 = 842)
+        assertEquals(595, buf.getInt(352))
+        assertEquals(842, buf.getInt(356))
+
+        // Width, Height in pixels at 372, 376
         assertEquals(4960, buf.getInt(372))
         assertEquals(7016, buf.getInt(376))
+
+        // BitsPerColor (384), BitsPerPixel (388), BytesPerLine (392), ColorOrder (396), ColorSpace (400), NumColors (420)
         assertEquals(8, buf.getInt(384))
         assertEquals(24, buf.getInt(388))
         assertEquals(4960 * 3, buf.getInt(392))
+        assertEquals(0, buf.getInt(396))
         assertEquals(19, buf.getInt(400)) // sRGB
+        assertEquals(3, buf.getInt(420)) // 3 channels
+
+        // TotalPageCount at 452
+        assertEquals(2, buf.getInt(452))
+
+        // PageSizeName at 1732..1795
+        val pageSizeNameStr = String(hdr, 1732, "iso_a4_210x297mm".length, StandardCharsets.US_ASCII)
+        assertEquals("iso_a4_210x297mm", pageSizeNameStr)
+    }
+
+    @Test
+    fun `readAndVerifyPrintJobResponse accepts IPP 0x0000 and throws on IPP error status`() {
+        val okBody = byteArrayOf(0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03)
+        val okHttp = "HTTP/1.1 200 OK\r\nContent-Type: application/ipp\r\nContent-Length: ${okBody.size}\r\n\r\n"
+            .toByteArray(StandardCharsets.US_ASCII) + okBody
+
+        val okTransport = object : UsbByteTransport {
+            var readOnce = false
+            override fun write(data: ByteArray, offset: Int, length: Int): Int = length
+            override fun read(maxLength: Int, timeoutMs: Int): ByteArray {
+                return if (!readOnce) {
+                    readOnce = true
+                    okHttp
+                } else ByteArray(0)
+            }
+            override fun controlTransfer(requestType: Int, request: Int, value: Int, index: Int, buffer: ByteArray?, length: Int, timeoutMs: Int): Int = 0
+        }
+
+        val status = IppProtocolCodec.readAndVerifyPrintJobResponse(okTransport)
+        assertNotNull(status)
+        assertTrue(status!!.isSuccess)
+
+        // Rejection response: 0x040A client-error-document-format-not-supported
+        val errBody = byteArrayOf(0x02, 0x00, 0x04, 0x0A, 0x00, 0x00, 0x00, 0x02, 0x03)
+        val errHttp = "HTTP/1.1 200 OK\r\nContent-Type: application/ipp\r\nContent-Length: ${errBody.size}\r\n\r\n"
+            .toByteArray(StandardCharsets.US_ASCII) + errBody
+
+        val errTransport = object : UsbByteTransport {
+            var readOnce = false
+            override fun write(data: ByteArray, offset: Int, length: Int): Int = length
+            override fun read(maxLength: Int, timeoutMs: Int): ByteArray {
+                return if (!readOnce) {
+                    readOnce = true
+                    errHttp
+                } else ByteArray(0)
+            }
+            override fun controlTransfer(requestType: Int, request: Int, value: Int, index: Int, buffer: ByteArray?, length: Int, timeoutMs: Int): Int = 0
+        }
+
+        try {
+            IppProtocolCodec.readAndVerifyPrintJobResponse(errTransport)
+            fail("Expected IOException when IPP printer returns 0x040A")
+        } catch (expected: IOException) {
+            assertTrue(expected.message!!.contains("0x040A"))
+        }
     }
 
     @Test

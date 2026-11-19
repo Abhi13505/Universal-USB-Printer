@@ -237,7 +237,8 @@ data class ResolvedPrinterProfile(
     val isBestEffortFallback: Boolean,
     val overrideActive: Boolean,
     val activeInterfaceLabel: String,
-    val resolutionReason: String
+    val resolutionReason: String,
+    val unverifiedLanguageWarning: String? = null
 )
 
 sealed interface UsbPrinterState {

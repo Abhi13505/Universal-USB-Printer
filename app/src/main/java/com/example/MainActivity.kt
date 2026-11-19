@@ -94,6 +94,7 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
     val history by viewModel.printHistory.collectAsStateWithLifecycle()
     val deviceOverride by viewModel.deviceOverride.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+    val showFallbackConfirmDialog by viewModel.showFallbackConfirmDialog.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(snackbarMessage) {
@@ -236,6 +237,11 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
                                 onUpdatePhotoLayout = viewModel::updatePhotoLayout,
                                 onStartPrint = viewModel::startPrint,
                                 onCancelPrint = viewModel::cancelPrint,
+                                showFallbackConfirmDialog = showFallbackConfirmDialog,
+                                onDismissFallbackDialog = viewModel::dismissFallbackConfirmDialog,
+                                onPrintTinyProbe = viewModel::printTinyProbeFromFallback,
+                                onConfirmFallbackPrint = viewModel::confirmFallbackAndPrint,
+                                onOpenPrinterSettings = viewModel::openPrinterSettingsFromFallback,
                                 modifier = contentModifier
                             )
                         }

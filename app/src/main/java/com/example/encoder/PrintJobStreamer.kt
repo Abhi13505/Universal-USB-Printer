@@ -199,6 +199,131 @@ object PrintJobStreamer {
         )
     }
 
+    /**
+     * Sends a tiny 1-band (128-line) probe strip at 300 DPI so users can test an unverified/fallback
+     * printer protocol using minimal data (< 4 KB) without risking dozens of pages of raw @PJL garbage.
+     */
+    suspend fun streamTinyProbeJob(
+        transport: UsbByteTransport,
+        printerName: String,
+        protocol: DriverProtocol,
+        effectiveMonochrome: Boolean,
+        paperSize: PaperSize,
+        onProgress: (PrintJobProgress) -> Unit
+    ) {
+        val lut = HalftoneDitherEngine.buildBrightnessContrastLut(0f, 1f)
+        val probeDpi = 300
+        val effectiveProto = when (protocol) {
+            DriverProtocol.IPP_USB_PDF -> DriverProtocol.IPP_USB_PWG_RASTER
+            DriverProtocol.PDF_DIRECT -> if (effectiveMonochrome) DriverProtocol.PCL_5E_MONO else DriverProtocol.PCL_5C_COLOR
+            DriverProtocol.AUTO_DETECTED -> DriverProtocol.PCL_5E_MONO
+            else -> protocol
+        }
+        val (pageW, _) = BandCompositor.alignedPageDimensionsPx(paperSize.widthMm, paperSize.heightMm, probeDpi, probeDpi)
+        val probeHeightPx = BandCompositor.BAND_HEIGHT // 1 single 128-line band!
+
+        onProgress(
+            PrintJobProgress(
+                isPrinting = true,
+                currentPage = 1,
+                totalPages = 1,
+                currentCopy = 1,
+                totalCopies = 1,
+                currentBand = 1,
+                totalBands = 1,
+                phaseLabel = "Sending 1-band (${probeHeightPx}px) protocol probe..."
+            )
+        )
+
+        val bmp = Bitmap.createBitmap(pageW, probeHeightPx, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK
+            textSize = 28f
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val borderPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+        canvas.drawRect(24f, 12f, pageW - 24f, probeHeightPx - 12f, borderPaint)
+        canvas.drawText(
+            "USB PROBE OK | $printerName | ${effectiveProto.shortCode} | 300 DPI",
+            48f,
+            74f,
+            paint
+        )
+        val argb = IntArray(pageW * probeHeightPx)
+        bmp.getPixels(argb, 0, pageW, 0, 0, pageW, probeHeightPx)
+        bmp.recycle()
+
+        val ditherState = HalftoneDitherEngine.BandDitherState(pageW)
+        when (effectiveProto) {
+            DriverProtocol.IPP_USB_PWG_RASTER -> {
+                val colorMode = if (effectiveMonochrome) IppUsbEncoder.PwgColorMode.BLACK_1 else IppUsbEncoder.PwgColorMode.SRGB_24
+                val session = IppUsbEncoder.PwgStreamSession(transport, "Tiny Probe", 1, paperSize.pwgMediaName)
+                session.beginPage(pageW, probeHeightPx, probeDpi, probeDpi, colorMode, paperSize, 1)
+                session.writeBand(argb, pageW, probeHeightPx, 0, colorMode, DitherMode.CRISP_TEXT, lut, ditherState)
+                session.finish()
+            }
+            DriverProtocol.PCL_5C_COLOR, DriverProtocol.PCL_5E_MONO -> {
+                val session = PclEncoder.Pcl5Session(
+                    transport = transport,
+                    colorMode = !effectiveMonochrome && effectiveProto == DriverProtocol.PCL_5C_COLOR,
+                    dpiX = probeDpi,
+                    dpiY = probeDpi,
+                    paperSize = paperSize,
+                    copies = 1,
+                    jobName = "Tiny Probe"
+                )
+                session.beginPage(pageW, probeHeightPx)
+                session.writeBand(argb, pageW, probeHeightPx, 0, DitherMode.CRISP_TEXT, lut, ditherState)
+                session.endPage()
+                session.finish()
+            }
+            DriverProtocol.PCL_6_XL -> {
+                val session = PclEncoder.Pcl6XlSession(
+                    transport = transport,
+                    colorMode = !effectiveMonochrome,
+                    dpiX = probeDpi,
+                    dpiY = probeDpi,
+                    paperSize = paperSize,
+                    copies = 1,
+                    jobName = "Tiny Probe"
+                )
+                session.beginPage(pageW, probeHeightPx)
+                session.writeBand(argb, pageW, probeHeightPx, 0, lut)
+                session.endPage()
+                session.finish()
+            }
+            DriverProtocol.POSTSCRIPT -> {
+                val session = PdfAndPostScriptEncoder.PostScriptSession(
+                    transport = transport,
+                    colorMode = !effectiveMonochrome,
+                    copies = 1,
+                    jobName = "Tiny Probe"
+                )
+                val probeHeightMm = (probeHeightPx.toFloat() / probeDpi.toFloat()) * 25.4f
+                session.beginPage(0, paperSize.widthMm, probeHeightMm, pageW, probeHeightPx)
+                session.writeBand(argb, pageW, probeHeightPx, 0, DitherMode.CRISP_TEXT, lut, ditherState)
+                session.endPage()
+                session.finish()
+            }
+            DriverProtocol.SAMSUNG_QPDL_0X11,
+            DriverProtocol.SAMSUNG_QPDL_0X13_JBIG1,
+            DriverProtocol.SAMSUNG_QPDL_0X15_COLOR -> {
+                val session = QpdlEncoder.QpdlSession(transport, effectiveProto, probeDpi, probeDpi, paperSize, 1)
+                session.beginPage(pageW, probeHeightPx)
+                session.writeBand(0, 1, argb, pageW, probeHeightPx, 0, probeHeightPx, DitherMode.CRISP_TEXT, lut, ditherState)
+                session.endPage()
+                session.finish()
+            }
+            else -> Unit
+        }
+    }
+
     private suspend fun streamPagedRasterJob(
         transport: UsbByteTransport,
         jobName: String,
@@ -222,6 +347,11 @@ object PrintJobStreamer {
             else -> protocol
         }
 
+        // PCL 5 raster mode only supports up to 600x600 DPI (300 or 600)
+        val isPcl5 = effectiveProto == DriverProtocol.PCL_5C_COLOR || effectiveProto == DriverProtocol.PCL_5E_MONO
+        val effectiveDpiX = if (isPcl5) PclEncoder.normalizePcl5Resolution(dpiX) else dpiX
+        val effectiveDpiY = if (isPcl5) PclEncoder.normalizePcl5Resolution(dpiY) else dpiY
+
         val ippColorMode = if (effectiveMonochrome) {
             IppUsbEncoder.PwgColorMode.BLACK_1
         } else {
@@ -232,12 +362,12 @@ object PrintJobStreamer {
             IppUsbEncoder.PwgStreamSession(transport, jobName, copies, paperSize.pwgMediaName)
         } else null
 
-        val pcl5Session = if (effectiveProto == DriverProtocol.PCL_5C_COLOR || effectiveProto == DriverProtocol.PCL_5E_MONO) {
+        val pcl5Session = if (isPcl5) {
             PclEncoder.Pcl5Session(
                 transport = transport,
                 colorMode = !effectiveMonochrome && effectiveProto == DriverProtocol.PCL_5C_COLOR,
-                dpiX = dpiX,
-                dpiY = dpiY,
+                dpiX = effectiveDpiX,
+                dpiY = effectiveDpiY,
                 paperSize = paperSize,
                 copies = copies,
                 jobName = jobName
@@ -248,8 +378,8 @@ object PrintJobStreamer {
             PclEncoder.Pcl6XlSession(
                 transport = transport,
                 colorMode = !effectiveMonochrome,
-                dpiX = dpiX,
-                dpiY = dpiY,
+                dpiX = effectiveDpiX,
+                dpiY = effectiveDpiY,
                 paperSize = paperSize,
                 copies = copies,
                 jobName = jobName
@@ -269,18 +399,18 @@ object PrintJobStreamer {
             effectiveProto == DriverProtocol.SAMSUNG_QPDL_0X13_JBIG1 ||
             effectiveProto == DriverProtocol.SAMSUNG_QPDL_0X15_COLOR
         ) {
-            QpdlEncoder.QpdlSession(transport, effectiveProto, dpiX, dpiY, paperSize, copies)
+            QpdlEncoder.QpdlSession(transport, effectiveProto, effectiveDpiX, effectiveDpiY, paperSize, copies)
         } else null
 
         try {
             for (pageIdx in 0 until pageCount) {
                 coroutineContext.ensureActive()
                 val (mmW, mmH) = pageGeometry(pageIdx)
-                val (pageW, pageH) = BandCompositor.alignedPageDimensionsPx(mmW, mmH, dpiX, dpiY)
+                val (pageW, pageH) = BandCompositor.alignedPageDimensionsPx(mmW, mmH, effectiveDpiX, effectiveDpiY)
                 val totalBands = (pageH + BandCompositor.BAND_HEIGHT - 1) / BandCompositor.BAND_HEIGHT
                 val ditherState = HalftoneDitherEngine.BandDitherState(pageW)
 
-                ippSession?.beginPage(pageW, pageH, dpiX, dpiY, ippColorMode, paperSize, pageCount)
+                ippSession?.beginPage(pageW, pageH, effectiveDpiX, effectiveDpiY, ippColorMode, paperSize, pageCount)
                 pcl5Session?.beginPage(pageW, pageH)
                 pcl6Session?.beginPage(pageW, pageH)
                 psSession?.beginPage(pageIdx, mmW, mmH, pageW, pageH)

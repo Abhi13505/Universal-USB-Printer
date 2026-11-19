@@ -11,6 +11,7 @@ import com.example.usb.PrinterCapabilityResolver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
@@ -59,6 +60,32 @@ class Ieee1284AndResolverTest {
         assertEquals(DriverProtocol.SAMSUNG_QPDL_0X11, profile.effectiveProtocol)
         assertFalse(profile.effectiveColorSupported)
         assertFalse(profile.isBestEffortFallback)
+        assertNull(profile.unverifiedLanguageWarning)
+    }
+
+    @Test
+    fun `resolver uses PCL or PostScript on newer Samsung models that report standard PDLs`() {
+        val samsungPcl6 = UsbDeviceInfo(10, 0x04E8, 0x3999, "/dev/usb", "ProXpress M4020", "Samsung", false, true, 2)
+        val ieeePcl6 = Ieee1284Info(manufacturer = "Samsung", model = "ProXpress M4020", commandSetTokens = listOf("SPL", "PCL6", "PS3"))
+        val profilePcl6 = PrinterCapabilityResolver.resolve(samsungPcl6, ieeePcl6, null)
+        assertEquals(DriverProtocol.PCL_6_XL, profilePcl6.effectiveProtocol)
+        assertFalse(profilePcl6.isBestEffortFallback)
+
+        val samsungPs = UsbDeviceInfo(11, 0x04E8, 0x3998, "/dev/usb", "Laser M3320", "Samsung", false, true, 2)
+        val ieeePs = Ieee1284Info(manufacturer = "Samsung", model = "Laser M3320", commandSetTokens = listOf("POSTSCRIPT"))
+        val profilePs = PrinterCapabilityResolver.resolve(samsungPs, ieeePs, null)
+        assertEquals(DriverProtocol.POSTSCRIPT, profilePs.effectiveProtocol)
+        assertFalse(profilePs.isBestEffortFallback)
+    }
+
+    @Test
+    fun `resolver rejects PCL 3 as verified PCL 5 and flags fallback warning`() {
+        val pcl3Inkjet = UsbDeviceInfo(12, 0x03F0, 0x1111, "/dev/usb", "DeskJet 2700", "HP", false, true, 2)
+        val ieeePcl3 = Ieee1284Info(manufacturer = "HP", model = "DeskJet 2700", commandSetTokens = listOf("PCL3GUI", "PJL"))
+        val profile = PrinterCapabilityResolver.resolve(pcl3Inkjet, ieeePcl3, null)
+        assertTrue(profile.isBestEffortFallback)
+        assertNotNull(profile.unverifiedLanguageWarning)
+        assertTrue(profile.unverifiedLanguageWarning!!.contains("PCL 3"))
     }
 
     @Test
@@ -72,11 +99,12 @@ class Ieee1284AndResolverTest {
     }
 
     @Test
-    fun `resolver applies best-effort vendor fallback when CMD is missing`() {
+    fun `resolver applies best-effort vendor fallback with warning when CMD is missing`() {
         val hpDevice = UsbDeviceInfo(3, PrinterCapabilityResolver.VID_HP, 0x9999, "/dev/usb", "LaserJet P1102", "HP", false, true, 2)
         val profile = PrinterCapabilityResolver.resolve(hpDevice, Ieee1284Info(), null)
         assertTrue(profile.isBestEffortFallback)
         assertEquals(DriverProtocol.PCL_5E_MONO, profile.effectiveProtocol)
+        assertNotNull(profile.unverifiedLanguageWarning)
     }
 
     @Test
@@ -90,6 +118,8 @@ class Ieee1284AndResolverTest {
         assertEquals(DriverProtocol.POSTSCRIPT, profile.effectiveProtocol)
         assertTrue(profile.effectiveColorSupported)
         assertTrue(profile.overrideActive)
+        assertFalse(profile.isBestEffortFallback)
+        assertNull(profile.unverifiedLanguageWarning)
         assertNotNull(profile.resolutionReason)
     }
 }

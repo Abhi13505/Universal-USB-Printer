@@ -12,51 +12,66 @@ object PclEncoder {
     private const val ESC = "\u001B"
     private const val UEL = "\u001B%-12345X"
 
+    /**
+     * HP PCL 5 Technical Reference Manual: valid raster resolutions (ESC * t # R) top out at 600 DPI
+     * (75, 100, 150, 200, 300, 600). Values above 600 are invalid in PCL 5 raster mode.
+     */
+    fun normalizePcl5Resolution(dpi: Int): Int = if (dpi <= 300) 300 else 600
+
+    /**
+     * HP PCL 5 Color Technical Reference Manual — Configure Image Data (ESC * v 6 W):
+     * Byte 0: 0x00 = Device RGB color space
+     * Byte 1: 0x03 = Direct by Pixel encoding (chunky 24-bit RGB)
+     * Byte 2: 0x00 = Bits per index (unused for direct-by-pixel)
+     * Byte 3: 0x08 = 8 bits for Component 1 (Red)
+     * Byte 4: 0x08 = 8 bits for Component 2 (Green)
+     * Byte 5: 0x08 = 8 bits for Component 3 (Blue)
+     */
+    internal val PCL5C_CONFIGURE_IMAGE_DATA_24BIT_RGB = byteArrayOf(
+        0x1B, '*'.code.toByte(), 'v'.code.toByte(), '6'.code.toByte(), 'W'.code.toByte(),
+        0x00, 0x03, 0x00, 0x08, 0x08, 0x08
+    )
+
     class Pcl5Session(
         private val transport: UsbByteTransport,
         private val colorMode: Boolean,
-        private val dpiX: Int,
-        private val dpiY: Int,
+        dpiX: Int,
+        @Suppress("UNUSED_PARAMETER") dpiY: Int,
         private val paperSize: PaperSize,
         private val copies: Int,
         jobName: String
     ) {
-        private val resolution = dpiX.coerceAtLeast(300)
+        val resolution: Int = normalizePcl5Resolution(dpiX)
 
         init {
+            // Note: Do not emit @PJL SET COPIES here because ESC & l # X is emitted in PCL per page;
+            // setting copies in both PJL and PCL causes many printers to multiply copies (N * N).
             val pjl = buildString {
                 append(UEL)
                 append("@PJL JOB NAME=\"").append(jobName.take(40)).append("\"\r\n")
                 append("@PJL SET RESOLUTION=").append(resolution).append("\r\n")
-                append("@PJL SET COPIES=").append(copies.coerceIn(1, 99)).append("\r\n")
                 append("@PJL ENTER LANGUAGE=PCL\r\n")
+                append(ESC).append("E") // Single job-start PCL reset
             }
             transport.write(pjl.toByteArray(StandardCharsets.US_ASCII))
         }
 
         fun beginPage(widthPx: Int, heightPx: Int) {
             val sb = StringBuilder()
-            sb.append(ESC).append("E") // Printer reset
             sb.append(ESC).append("&u").append(resolution).append("D") // Unit of measure
             sb.append(ESC).append("&l").append(paperSize.pclCode).append("A") // Paper size
             sb.append(ESC).append("&l0O") // Portrait raster coords (already rotated in band compositor)
-            sb.append(ESC).append("&l").append(copies.coerceIn(1, 99)).append("X")
-            sb.append(ESC).append("*t").append(resolution).append("R") // Raster resolution
+            sb.append(ESC).append("&l").append(copies.coerceIn(1, 99)).append("X") // Copies set once in PCL
+            sb.append(ESC).append("*t").append(resolution).append("R") // Raster resolution (300 or 600)
             sb.append(ESC).append("*r").append(widthPx).append("S") // Source width
             sb.append(ESC).append("*r").append(heightPx).append("T") // Source height
             transport.write(sb.toString().toByteArray(StandardCharsets.US_ASCII))
 
             if (colorMode) {
-                // PCL 5c Configure Image Data (ESC * v 6 W): 24-bit direct sRGB (02 03 08 08 08 00)
-                val cidCmd = byteArrayOf(
-                    0x1B, '*'.code.toByte(), 'v'.code.toByte(), '6'.code.toByte(), 'W'.code.toByte(),
-                    0x02, 0x03, 0x08, 0x08, 0x08, 0x00
-                )
-                transport.write(cidCmd)
+                transport.write(PCL5C_CONFIGURE_IMAGE_DATA_24BIT_RGB)
             }
 
             val startRaster = buildString {
-                sb.clear()
                 append(ESC).append("*p0x0Y")
                 append(ESC).append("*r1A") // Start graphics at current cursor
                 append(ESC).append("*b2M") // TIFF PackBits compression
@@ -121,7 +136,7 @@ object PclEncoder {
     }
 
     /**
-     * PCL 6 (PCL-XL 2.0) binary stream encoder using uncompressed/RLE 128-line raster image strips.
+     * PCL 6 (PCL-XL 2.0) binary stream encoder using uncompressed 128-line raster image strips.
      */
     class Pcl6XlSession(
         private val transport: UsbByteTransport,

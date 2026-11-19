@@ -35,6 +35,126 @@ object IppProtocolCodec {
         val ippBody: ByteArray
     )
 
+    data class IppOperationStatus(
+        val httpStatusCode: Int,
+        val ippStatusCode: Int,
+        val statusMessage: String = ""
+    ) {
+        val isSuccess: Boolean
+            get() = httpStatusCode in 200..299 && ippStatusCode in 0x0000..0x00FF
+    }
+
+    /**
+     * Parses an HTTP + IPP response and extracts both the HTTP status code and the 2-byte big-endian
+     * IPP status-code (plus any optional 'status-message' operation attribute).
+     */
+    fun parseIppOperationStatus(rawHttpBytes: ByteArray): IppOperationStatus? {
+        val http = parseHttpIppResponse(rawHttpBytes) ?: return null
+        if (http.ippBody.size < 8) {
+            return IppOperationStatus(
+                httpStatusCode = http.statusCode,
+                ippStatusCode = if (http.statusCode in 200..299) 0x0000 else 0x0500,
+                statusMessage = if (http.statusCode in 200..299) "" else "HTTP status ${http.statusCode}"
+            )
+        }
+        val buf = ByteBuffer.wrap(http.ippBody).order(ByteOrder.BIG_ENDIAN)
+        buf.get() // major
+        buf.get() // minor
+        val ippStatus = buf.short.toInt() and 0xFFFF
+        buf.int // requestId
+
+        var message = ""
+        var currentAttrName = ""
+        while (buf.hasRemaining()) {
+            val tag = buf.get()
+            if (tag == TAG_END_OF_ATTRIBUTES) break
+            if (tag.toInt() in 0x00..0x0F) {
+                currentAttrName = ""
+                continue
+            }
+            if (buf.remaining() < 2) break
+            val nameLen = buf.short.toInt() and 0xFFFF
+            if (buf.remaining() < nameLen + 2) break
+            if (nameLen > 0) {
+                val nb = ByteArray(nameLen)
+                buf.get(nb)
+                currentAttrName = String(nb, StandardCharsets.UTF_8)
+            }
+            val valLen = buf.short.toInt() and 0xFFFF
+            if (buf.remaining() < valLen) break
+            val vb = ByteArray(valLen)
+            buf.get(vb)
+            if (currentAttrName == "status-message" &&
+                (tag == TAG_TEXT_WITHOUT_LANG || tag == TAG_NAME_WITHOUT_LANG)
+            ) {
+                message = String(vb, StandardCharsets.UTF_8).trim()
+            }
+        }
+        return IppOperationStatus(
+            httpStatusCode = http.statusCode,
+            ippStatusCode = ippStatus,
+            statusMessage = message
+        )
+    }
+
+    /**
+     * Reads the HTTP/1.1 + IPP response after a Print-Job request and throws an [java.io.IOException]
+     * if the printer returns an HTTP error or an IPP rejection status code (>= 0x0200).
+     */
+    fun readAndVerifyPrintJobResponse(
+        transport: UsbByteTransport,
+        maxWaitMs: Long = 6000L
+    ): IppOperationStatus? {
+        val responseBuffer = ByteArrayOutputStream()
+        val startTime = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val chunk = transport.read(8192, 1000)
+            if (chunk.isNotEmpty()) {
+                responseBuffer.write(chunk)
+                val accumulated = responseBuffer.toByteArray()
+                if (isHttpResponseComplete(accumulated)) {
+                    break
+                }
+            } else if (responseBuffer.size() > 0) {
+                break
+            }
+        }
+        val raw = responseBuffer.toByteArray()
+        if (raw.isEmpty()) return null
+
+        val status = parseIppOperationStatus(raw) ?: return null
+        if (!status.isSuccess) {
+            val detail = status.statusMessage.ifBlank { describeIppStatusCode(status.ippStatusCode) }
+            throw java.io.IOException(
+                "IPP printer rejected job (HTTP ${status.httpStatusCode}, IPP 0x%04X: %s)".format(
+                    status.ippStatusCode,
+                    detail
+                )
+            )
+        }
+        return status
+    }
+
+    fun describeIppStatusCode(code: Int): String = when (code) {
+        0x0000 -> "successful-ok"
+        0x0001 -> "successful-ok-ignored-or-substituted-attributes"
+        0x0002 -> "successful-ok-conflicting-attributes"
+        0x0400 -> "client-error-bad-request"
+        0x0401 -> "client-error-forbidden"
+        0x0404 -> "client-error-not-found"
+        0x0406 -> "client-error-not-possible"
+        0x040A -> "client-error-document-format-not-supported"
+        0x040B -> "client-error-attributes-or-values-not-supported"
+        0x0413 -> "client-error-document-format-error"
+        0x0500 -> "server-error-internal-error"
+        0x0501 -> "server-error-operation-not-supported"
+        0x0502 -> "server-error-service-unavailable"
+        0x0504 -> "server-error-device-error"
+        0x0507 -> "server-error-busy"
+        0x0508 -> "server-error-job-canceled"
+        else -> if (code >= 0x0500) "server-error" else if (code >= 0x0400) "client-error" else "status-0x%04X".format(code)
+    }
+
     fun buildGetPrinterAttributesIppPayload(
         printerUri: String = "ipp://localhost/ipp/print",
         requestId: Int = 1

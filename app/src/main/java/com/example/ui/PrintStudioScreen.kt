@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -57,6 +58,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -123,6 +125,11 @@ fun PrintStudioScreen(
     onUpdatePhotoLayout: (PhotoLayoutOptions) -> Unit,
     onStartPrint: () -> Unit,
     onCancelPrint: () -> Unit,
+    showFallbackConfirmDialog: Boolean = false,
+    onDismissFallbackDialog: () -> Unit = {},
+    onPrintTinyProbe: () -> Unit = {},
+    onConfirmFallbackPrint: () -> Unit = {},
+    onOpenPrinterSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val studio = LocalStudioColors.current
@@ -166,6 +173,79 @@ fun PrintStudioScreen(
             onApply = {
                 onUpdatePhotoLayout(it)
                 showPhotoLayoutDialog = false
+            }
+        )
+    }
+
+    if (showFallbackConfirmDialog && usbState is UsbPrinterState.Ready) {
+        val profile = usbState.profile
+        AlertDialog(
+            onDismissRequest = onDismissFallbackDialog,
+            containerColor = studio.cardSurface,
+            title = {
+                Text(
+                    text = "Unverified Printer Language",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = studio.primaryInk
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = profile.unverifiedLanguageWarning ?: profile.resolutionReason,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = studio.primaryInk
+                    )
+                    Text(
+                        text = "Guessed protocol: ${profile.effectiveProtocol.displayName}. To avoid wasting paper on raw @PJL or garbage lines, send a tiny 1-band probe first or choose a language in the Printer tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = studio.mutedGraphite
+                    )
+                }
+            },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onPrintTinyProbe,
+                        colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("fallback_probe_button")
+                    ) {
+                        Text("Send Tiny 1-Band Probe (Recommended)")
+                    }
+                    FilledTonalButton(
+                        onClick = onConfirmFallbackPrint,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("fallback_confirm_print_button")
+                    ) {
+                        Text("Trust ${profile.effectiveProtocol.shortCode} & Print Full Job")
+                    }
+                    OutlinedButton(
+                        onClick = onOpenPrinterSettings,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("fallback_open_settings_button")
+                    ) {
+                        Text("Choose Language in Printer Tab")
+                    }
+                    TextButton(
+                        onClick = onDismissFallbackDialog,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("fallback_cancel_button")
+                    ) {
+                        Text("Cancel", color = studio.mutedGraphite)
+                    }
+                }
             }
         )
     }
