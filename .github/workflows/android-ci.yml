@@ -28,7 +28,12 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare Debug Keystore
+      - name: Configure Signing Keystores
+        id: signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
@@ -36,14 +41,37 @@ jobs:
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Assemble APK
-        run: gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+            echo "release_signing=true" >> "$GITHUB_OUTPUT"
+            echo "Release keystore decoded — building release-signed APK."
+          else
+            echo "release_signing=false" >> "$GITHUB_OUTPUT"
+            echo "Release secrets not configured — falling back to debug-signed APK."
+          fi
 
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest -x kspDebugUnitTestKotlin -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
 
-      - name: Prepare Release APK Asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk Universal-USB-Printer.apk
+      - name: Assemble Release APK (Signed)
+        if: steps.signing.outputs.release_signing == 'true'
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          gradle :app:assembleRelease -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+          cp app/build/outputs/apk/release/app-release.apk Universal-USB-Printer.apk
+
+      - name: Assemble Debug APK (Fallback)
+        if: steps.signing.outputs.release_signing != 'true'
+        run: |
+          gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+          cp app/build/outputs/apk/debug/app-debug.apk Universal-USB-Printer.apk
+
+      - name: Clean Up Decoded Release Keystore
+        if: always()
+        run: rm -f my-upload-key.jks
 
       - name: Upload APK Workflow Artifact
         uses: actions/upload-artifact@v4
@@ -60,6 +88,8 @@ jobs:
           body: |
             ### Universal USB Printer — Direct APK Download
             Download **`Universal-USB-Printer.apk`** from the **Assets** section below to install directly on your Android phone or tablet.
+
+            - **Signing Mode**: ${{ steps.signing.outputs.release_signing == 'true' && 'Release Signed (`upload` keystore)' || 'Debug Signed (configure `RELEASE_KEYSTORE_BASE64`, `STORE_PASSWORD`, and `KEY_PASSWORD` secrets for release signing)' }}
           files: Universal-USB-Printer.apk
           draft: false
           prerelease: false

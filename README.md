@@ -24,3 +24,20 @@ gradle assembleDebug
 gradle :app:testDebugUnitTest
 ```
 
+## Release Signing in GitHub Actions
+
+By default, GitHub Actions falls back to debug signing so builds succeed immediately. To publish **release-signed** APKs automatically:
+
+1. Generate an upload keystore (keep the `upload` key alias):
+   ```bash
+   keytool -genkeypair -v -keystore my-upload-key.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
+   base64 -w 0 my-upload-key.jks
+   ```
+2. In your GitHub repository, go to **Settings → Secrets and variables → Actions** and add:
+   - `RELEASE_KEYSTORE_BASE64`: the single-line base64 output of `my-upload-key.jks`
+   - `STORE_PASSWORD`: your keystore password
+   - `KEY_PASSWORD`: your key password
+
+Once those 3 secrets are present, every push automatically runs `:app:assembleRelease` and attaches the release-signed `Universal-USB-Printer.apk` to GitHub Releases.
+
+

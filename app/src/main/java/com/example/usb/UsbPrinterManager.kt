@@ -46,6 +46,19 @@ class UsbPrinterManager(
         private const val REQ_GET_DEVICE_ID = 0x00
         private const val REQ_GET_PORT_STATUS = 0x01
         private const val REQ_SOFT_RESET = 0x02
+
+        const val PRINT_BULK_WRITE_TIMEOUT_MS = AndroidUsbBulkTransport.DEFAULT_WRITE_TIMEOUT_MS
+        const val PRINT_BULK_WRITE_RETRIES = AndroidUsbBulkTransport.DEFAULT_MAX_WRITE_RETRIES
+        private const val PROBE_BULK_WRITE_TIMEOUT_MS = 10_000
+        private const val PROBE_BULK_WRITE_RETRIES = 1
+
+        /**
+         * USB Printer Class 1.1 Section 4.2.1 (GET_DEVICE_ID):
+         * wIndex high byte = interface number, low byte = alternate setting.
+         */
+        internal fun buildGetDeviceIdIndex(interfaceNumber: Int, alternateSetting: Int): Int {
+            return ((interfaceNumber and 0xFF) shl 8) or (alternateSetting and 0xFF)
+        }
     }
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
@@ -345,6 +358,8 @@ class UsbPrinterManager(
             connection = connection,
             outEndpoint = outEp,
             inEndpoint = inEp,
+            writeTimeoutMs = PRINT_BULK_WRITE_TIMEOUT_MS,
+            maxWriteRetries = PRINT_BULK_WRITE_RETRIES,
             onBytesWritten = onBytesWritten
         )
         val cleanup = {
@@ -369,7 +384,13 @@ class UsbPrinterManager(
             val (outEp, inEp) = findBulkEndpoints(iface)
             if (outEp == null || inEp == null) return null
 
-            val transport = AndroidUsbBulkTransport(connection, outEp, inEp)
+            val transport = AndroidUsbBulkTransport(
+                connection = connection,
+                outEndpoint = outEp,
+                inEndpoint = inEp,
+                writeTimeoutMs = PROBE_BULK_WRITE_TIMEOUT_MS,
+                maxWriteRetries = PROBE_BULK_WRITE_RETRIES
+            )
             val ippBody = IppProtocolCodec.buildGetPrinterAttributesIppPayload()
             val httpHeader = IppProtocolCodec.wrapInHttpPostRequest(ippBody.size.toLong())
             transport.write(httpHeader)
@@ -409,11 +430,12 @@ class UsbPrinterManager(
         val claimed = connection.claimInterface(iface, true)
         try {
             val idBuffer = ByteArray(1024)
+            val deviceIdIndex = buildGetDeviceIdIndex(iface.id, iface.alternateSetting)
             val idLen = connection.controlTransfer(
                 0xA1,
                 REQ_GET_DEVICE_ID,
                 0,
-                (iface.id shl 8) or iface.alternateSetting,
+                deviceIdIndex,
                 idBuffer,
                 idBuffer.size,
                 2500
@@ -421,12 +443,12 @@ class UsbPrinterManager(
             if (idLen > 2) {
                 info = Ieee1284Parser.parseDeviceId(idBuffer.copyOf(idLen))
             } else {
-                // Retry with wIndex = iface.id for printers that expect interface index directly
+                // Legacy fallback for non-compliant USB bridge firmware expecting raw interface index
                 val retryLen = connection.controlTransfer(
                     0xA1,
                     REQ_GET_DEVICE_ID,
                     0,
-                    iface.id,
+                    iface.id and 0xFF,
                     idBuffer,
                     idBuffer.size,
                     2500
