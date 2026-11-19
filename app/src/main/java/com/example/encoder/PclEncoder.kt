@@ -136,7 +136,14 @@ object PclEncoder {
     }
 
     /**
-     * PCL 6 (PCL-XL 2.0) binary stream encoder using uncompressed 128-line raster image strips.
+     * PCL 6 (PCL-XL 2.0) binary stream encoder verified against HP PCL XL Protocol Class 2.0 / pxattr.h:
+     * - Operators: BeginSession (0x41), EndSession (0x42), BeginPage (0x43), EndPage (0x44),
+     *   OpenDataSource (0x48), CloseDataSource (0x49), SetColorSpace (0x6A), SetCursor (0x6B),
+     *   BeginImage (0xB0), ReadImage (0xB1), EndImage (0xB2)
+     * - Attributes: ColorSpace (0x03), MediaSize (0x25), Orientation (0x28), PageCopies (0x31),
+     *   Point (0x4C), ColorDepth (0x62), BlockHeight (0x63), ColorMapping (0x64), CompressMode (0x65),
+     *   DestinationSize (0x67), SourceHeight (0x6B), SourceWidth (0x6C), StartLine (0x6D),
+     *   DataOrg (0x82), Measure (0x86), SourceType (0x88), UnitsPerMeasure (0x89), ErrorReport (0x8F)
      */
     class Pcl6XlSession(
         private val transport: UsbByteTransport,
@@ -147,6 +154,52 @@ object PclEncoder {
         private val copies: Int,
         jobName: String
     ) {
+        companion object {
+            // Operators (pxoper.h)
+            const val OP_BEGIN_SESSION = 0x41
+            const val OP_END_SESSION = 0x42
+            const val OP_BEGIN_PAGE = 0x43
+            const val OP_END_PAGE = 0x44
+            const val OP_OPEN_DATA_SOURCE = 0x48
+            const val OP_CLOSE_DATA_SOURCE = 0x49
+            const val OP_SET_COLOR_SPACE = 0x6A
+            const val OP_SET_CURSOR = 0x6B
+            const val OP_BEGIN_IMAGE = 0xB0
+            const val OP_READ_IMAGE = 0xB1
+            const val OP_END_IMAGE = 0xB2
+
+            // Attributes (pxattr.h)
+            const val ATTR_COLOR_SPACE = 0x03
+            const val ATTR_MEDIA_SIZE = 0x25
+            const val ATTR_ORIENTATION = 0x28
+            const val ATTR_PAGE_COPIES = 0x31
+            const val ATTR_POINT = 0x4C
+            const val ATTR_COLOR_DEPTH = 0x62
+            const val ATTR_BLOCK_HEIGHT = 0x63
+            const val ATTR_COLOR_MAPPING = 0x64
+            const val ATTR_COMPRESS_MODE = 0x65
+            const val ATTR_DESTINATION_SIZE = 0x67
+            const val ATTR_SOURCE_HEIGHT = 0x6B
+            const val ATTR_SOURCE_WIDTH = 0x6C
+            const val ATTR_START_LINE = 0x6D
+            const val ATTR_DATA_ORG = 0x82
+            const val ATTR_MEASURE = 0x86
+            const val ATTR_SOURCE_TYPE = 0x88
+            const val ATTR_UNITS_PER_MEASURE = 0x89
+            const val ATTR_ERROR_REPORT = 0x8F
+
+            // Enumerations (pxenum.h)
+            const val ENUM_COLOR_GRAY = 0x01
+            const val ENUM_COLOR_RGB = 0x02
+            const val ENUM_COLOR_MAPPING_DIRECT_PIXEL = 0x00
+            const val ENUM_COLOR_DEPTH_8BIT = 0x02
+            const val ENUM_COMPRESS_NONE = 0x00
+            const val ENUM_MEASURE_INCH = 0x00
+            const val ENUM_SOURCE_DEFAULT = 0x00
+            const val ENUM_DATA_ORG_BINARY_LOW_BYTE_FIRST = 0x01
+            const val ENUM_ERROR_BACK_CH_AND_ERR_PAGE = 0x03
+        }
+
         init {
             val header = buildString {
                 append(UEL)
@@ -156,42 +209,46 @@ object PclEncoder {
             }
             transport.write(header.toByteArray(StandardCharsets.US_ASCII))
 
-            // BeginSession: Measure(eInch=0), UnitsPerMeasure(dpiX, dpiY), ErrorReport(eBackChannelAndPage=3)
+            // BeginSession + OpenDataSource immediately after
             val sess = ByteArrayOutputStream()
-            attrUByte(sess, 0x86, 0x00) // Measure = eInch
-            attrUInt16XY(sess, 0x89, dpiX, dpiY) // UnitsPerMeasure
-            attrUByte(sess, 0x8F, 0x03) // ErrorReport
-            sess.write(0x41) // BeginSession
+            attrUByte(sess, ATTR_MEASURE, ENUM_MEASURE_INCH)
+            attrUInt16XY(sess, ATTR_UNITS_PER_MEASURE, dpiX, dpiY)
+            attrUByte(sess, ATTR_ERROR_REPORT, ENUM_ERROR_BACK_CH_AND_ERR_PAGE)
+            sess.write(OP_BEGIN_SESSION)
+
+            attrUByte(sess, ATTR_SOURCE_TYPE, ENUM_SOURCE_DEFAULT)
+            attrUByte(sess, ATTR_DATA_ORG, ENUM_DATA_ORG_BINARY_LOW_BYTE_FIRST)
+            sess.write(OP_OPEN_DATA_SOURCE)
             transport.write(sess.toByteArray())
         }
 
         fun beginPage(widthPx: Int, heightPx: Int) {
             val page = ByteArrayOutputStream()
-            attrUByte(page, 0x28, 0x00) // Orientation = Portrait
+            attrUByte(page, ATTR_ORIENTATION, 0x00) // ePortraitOrientation
             val mediaSize = when (paperSize) {
                 PaperSize.LETTER -> 0
                 PaperSize.LEGAL -> 1
                 PaperSize.A4 -> 2
                 PaperSize.A5 -> 16
             }
-            attrUByte(page, 0x25, mediaSize) // MediaSize
-            page.write(0x43) // BeginPage
+            attrUByte(page, ATTR_MEDIA_SIZE, mediaSize)
+            page.write(OP_BEGIN_PAGE)
 
             // SetColorSpace
-            attrUByte(page, 0x03, if (colorMode) 2 else 1) // 2=eRGB, 1=eGray
-            page.write(0x6A) // SetColorSpace
+            attrUByte(page, ATTR_COLOR_SPACE, if (colorMode) ENUM_COLOR_RGB else ENUM_COLOR_GRAY)
+            page.write(OP_SET_COLOR_SPACE)
 
-            // SetCursor(0,0)
-            attrUInt16XY(page, 0x4C, 0, 0)
-            page.write(0x6B) // SetCursor
+            // SetCursor(0, 0)
+            attrUInt16XY(page, ATTR_POINT, 0, 0)
+            page.write(OP_SET_CURSOR)
 
-            // BeginImage
-            attrUByte(page, 0x62, 0x00) // ColorMapping = eDirectPixel
-            attrUByte(page, 0x61, 0x02) // ColorDepth = e8Bit
-            attrUInt16(page, 0x6C, widthPx) // SourceWidth
-            attrUInt16(page, 0x6B, heightPx) // SourceHeight
-            attrUInt16XY(page, 0x67, widthPx, heightPx) // DestinationSize
-            page.write(0xB0) // BeginImage
+            // BeginImage: ColorMapping(0x64)=0, ColorDepth(0x62)=2, SourceWidth(0x6C), SourceHeight(0x6B), DestinationSize(0x67)
+            attrUByte(page, ATTR_COLOR_MAPPING, ENUM_COLOR_MAPPING_DIRECT_PIXEL)
+            attrUByte(page, ATTR_COLOR_DEPTH, ENUM_COLOR_DEPTH_8BIT)
+            attrUInt16(page, ATTR_SOURCE_WIDTH, widthPx)
+            attrUInt16(page, ATTR_SOURCE_HEIGHT, heightPx)
+            attrUInt16XY(page, ATTR_DESTINATION_SIZE, widthPx, heightPx)
+            page.write(OP_BEGIN_IMAGE)
             transport.write(page.toByteArray())
         }
 
@@ -208,10 +265,10 @@ object PclEncoder {
                 HalftoneDitherEngine.extractGray8Band(argb, widthPx, bandHeightPx, lut)
             }
             val cmd = ByteArrayOutputStream(pixelBytes.size + 32)
-            attrUInt16(cmd, 0x6D, startY) // StartLine
-            attrUInt16(cmd, 0x63, bandHeightPx) // BlockHeight
-            attrUByte(cmd, 0x64, 0x00) // CompressMode = eNoCompression (safe universal XL)
-            cmd.write(0xB1) // ReadImage
+            attrUInt16(cmd, ATTR_START_LINE, startY)
+            attrUInt16(cmd, ATTR_BLOCK_HEIGHT, bandHeightPx)
+            attrUByte(cmd, ATTR_COMPRESS_MODE, ENUM_COMPRESS_NONE)
+            cmd.write(OP_READ_IMAGE)
             // Embedded data length tag: 0xFA (dataLength) + uint32 LE
             cmd.write(0xFA)
             writeIntLE(cmd, pixelBytes.size)
@@ -221,15 +278,16 @@ object PclEncoder {
 
         fun endPage() {
             val end = ByteArrayOutputStream()
-            end.write(0xB2) // EndImage
-            attrUInt16(end, 0x31, copies.coerceIn(1, 99)) // PageCopies
-            end.write(0x44) // EndPage
+            end.write(OP_END_IMAGE)
+            attrUInt16(end, ATTR_PAGE_COPIES, copies.coerceIn(1, 99))
+            end.write(OP_END_PAGE)
             transport.write(end.toByteArray())
         }
 
         fun finish() {
             val out = ByteArrayOutputStream()
-            out.write(0x42) // EndSession
+            out.write(OP_CLOSE_DATA_SOURCE)
+            out.write(OP_END_SESSION)
             out.write(UEL.toByteArray(StandardCharsets.US_ASCII))
             transport.write(out.toByteArray())
         }

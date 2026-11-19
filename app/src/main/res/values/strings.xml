@@ -11,6 +11,7 @@
     <string name="action_scan_usb">Scan USB</string>
     <string name="action_soft_reset">Soft Reset</string>
     <string name="action_print_diagnostic_sheet">Print Diagnostic Sheet</string>
+    <string name="action_print_test_page">Print test page</string>
     <string name="action_clear_history">Clear History</string>
     <string name="action_photo_layout">Photo Size &amp; Layout</string>
     <string name="action_crop_area">Crop Area</string>

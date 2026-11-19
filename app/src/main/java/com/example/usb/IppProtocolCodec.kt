@@ -29,6 +29,8 @@ object IppProtocolCodec {
     private const val TAG_NATURAL_LANGUAGE: Byte = 0x48
     private const val TAG_MIME_MEDIA_TYPE: Byte = 0x49
 
+    const val DEFAULT_PRINT_JOB_RESPONSE_TIMEOUT_MS = 35_000L
+
     data class HttpIppResponse(
         val statusCode: Int,
         val headers: Map<String, String>,
@@ -41,20 +43,21 @@ object IppProtocolCodec {
         val statusMessage: String = ""
     ) {
         val isSuccess: Boolean
-            get() = httpStatusCode in 200..299 && ippStatusCode in 0x0000..0x00FF
+            get() = httpStatusCode == 200 && ippStatusCode in 0x0000..0x0002
     }
 
     /**
-     * Parses an HTTP + IPP response and extracts both the HTTP status code and the 2-byte big-endian
-     * IPP status-code (plus any optional 'status-message' operation attribute).
+     * Parses an HTTP + IPP response (stripping any interim 1xx headers such as HTTP/1.1 100 Continue)
+     * and extracts both the HTTP status code and the 2-byte big-endian IPP status-code
+     * (plus any optional 'status-message' operation attribute).
      */
     fun parseIppOperationStatus(rawHttpBytes: ByteArray): IppOperationStatus? {
         val http = parseHttpIppResponse(rawHttpBytes) ?: return null
         if (http.ippBody.size < 8) {
             return IppOperationStatus(
                 httpStatusCode = http.statusCode,
-                ippStatusCode = if (http.statusCode in 200..299) 0x0000 else 0x0500,
-                statusMessage = if (http.statusCode in 200..299) "" else "HTTP status ${http.statusCode}"
+                ippStatusCode = if (http.statusCode == 200) 0x0000 else 0x0500,
+                statusMessage = if (http.statusCode == 200) "" else "HTTP status ${http.statusCode}"
             )
         }
         val buf = ByteBuffer.wrap(http.ippBody).order(ByteOrder.BIG_ENDIAN)
@@ -98,17 +101,21 @@ object IppProtocolCodec {
     }
 
     /**
-     * Reads the HTTP/1.1 + IPP response after a Print-Job request and throws an [java.io.IOException]
-     * if the printer returns an HTTP error or an IPP rejection status code (>= 0x0200).
+     * Reads the complete HTTP/1.1 + IPP response after a Print-Job request and throws an [java.io.IOException]
+     * if the printer times out, fails HTTP 200, or returns an IPP status outside 0x0000..0x0002.
      */
     fun readAndVerifyPrintJobResponse(
         transport: UsbByteTransport,
-        maxWaitMs: Long = 6000L
-    ): IppOperationStatus? {
+        maxWaitMs: Long = DEFAULT_PRINT_JOB_RESPONSE_TIMEOUT_MS
+    ): IppOperationStatus {
         val responseBuffer = ByteArrayOutputStream()
         val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val chunk = transport.read(8192, 1000)
+        while (true) {
+            val elapsed = System.currentTimeMillis() - startTime
+            if (elapsed >= maxWaitMs) break
+
+            val chunkTimeout = minOf(1000L, (maxWaitMs - elapsed).coerceAtLeast(1L)).toInt()
+            val chunk = transport.read(8192, chunkTimeout)
             if (chunk.isNotEmpty()) {
                 responseBuffer.write(chunk)
                 val accumulated = responseBuffer.toByteArray()
@@ -116,19 +123,46 @@ object IppProtocolCodec {
                     break
                 }
             } else if (responseBuffer.size() > 0) {
-                break
+                // Only exit on an empty read if we already received a complete unframed response
+                // (neither Content-Length nor Transfer-Encoding: chunked) with a finished IPP body.
+                val accumulated = responseBuffer.toByteArray()
+                if (isHttpResponseComplete(accumulated) || isUnframedIppResponseLikelyComplete(accumulated)) {
+                    break
+                }
             }
         }
-        val raw = responseBuffer.toByteArray()
-        if (raw.isEmpty()) return null
 
-        val status = parseIppOperationStatus(raw) ?: return null
-        if (!status.isSuccess) {
-            val detail = status.statusMessage.ifBlank { describeIppStatusCode(status.ippStatusCode) }
+        val raw = responseBuffer.toByteArray()
+        if (raw.isEmpty()) {
             throw java.io.IOException(
-                "IPP printer rejected job (HTTP ${status.httpStatusCode}, IPP 0x%04X: %s)".format(
-                    status.ippStatusCode,
-                    detail
+                "Timed out after ${maxWaitMs / 1000}s waiting for IPP Print-Job response from printer."
+            )
+        }
+
+        val effective = stripInterimHttp1xxHeaders(raw)
+        if (effective.isEmpty() || !isHttpResponseCompleteOrUnframed(effective)) {
+            val statusPreview = parseHttpIppResponse(raw)?.statusCode
+            val partialDesc = if (statusPreview != null) "HTTP $statusPreview" else "truncated headers"
+            throw java.io.IOException(
+                "Incomplete IPP response from printer ($partialDesc after ${raw.size} bytes)."
+            )
+        }
+
+        val status = parseIppOperationStatus(effective)
+            ?: throw java.io.IOException("Invalid or unparseable HTTP/IPP response from printer.")
+
+        if (!status.isSuccess) {
+            val ippErrorName = describeIppStatusCode(status.ippStatusCode)
+            val detail = if (status.statusMessage.isNotBlank() && status.statusMessage != ippErrorName) {
+                "$ippErrorName (${status.statusMessage})"
+            } else {
+                ippErrorName
+            }
+            throw java.io.IOException(
+                "IPP printer rejected job: %s (HTTP %d, IPP 0x%04X)".format(
+                    detail,
+                    status.httpStatusCode,
+                    status.ippStatusCode
                 )
             )
         }
@@ -152,7 +186,9 @@ object IppProtocolCodec {
         0x0504 -> "server-error-device-error"
         0x0507 -> "server-error-busy"
         0x0508 -> "server-error-job-canceled"
-        else -> if (code >= 0x0500) "server-error" else if (code >= 0x0400) "client-error" else "status-0x%04X".format(code)
+        else -> if (code >= 0x0500) "server-error-0x%04X".format(code)
+        else if (code >= 0x0400) "client-error-0x%04X".format(code)
+        else "status-0x%04X".format(code)
     }
 
     fun buildGetPrinterAttributesIppPayload(
@@ -260,12 +296,14 @@ object IppProtocolCodec {
     fun encodeHttpFinalChunk(): ByteArray = "0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
 
     /**
-     * Parses a raw HTTP/1.1 response over IPP-over-USB bulk input, supporting both
-     * Content-Length and Transfer-Encoding: chunked framing.
+     * Parses a raw HTTP/1.1 response over IPP-over-USB bulk input, stripping any leading interim 1xx
+     * headers (such as HTTP/1.1 100 Continue) and supporting Content-Length + Transfer-Encoding: chunked.
      */
     fun parseHttpIppResponse(rawBytes: ByteArray): HttpIppResponse? {
-        val headerEndIdx = findHeaderSeparator(rawBytes) ?: return null
-        val headerText = String(rawBytes, 0, headerEndIdx, StandardCharsets.US_ASCII)
+        val effective = stripInterimHttp1xxHeaders(rawBytes)
+        if (effective.isEmpty()) return null
+        val headerEndIdx = findHeaderSeparator(effective) ?: return null
+        val headerText = String(effective, 0, headerEndIdx, StandardCharsets.US_ASCII)
         val lines = headerText.split("\r\n")
         if (lines.isEmpty()) return null
 
@@ -284,31 +322,92 @@ object IppProtocolCodec {
 
         val bodyStart = headerEndIdx + 4
         val bodyBytes = if (headers["transfer-encoding"]?.lowercase()?.contains("chunked") == true) {
-            decodeChunkedBody(rawBytes, bodyStart)
+            decodeChunkedBody(effective, bodyStart)
         } else {
             val contentLength = headers["content-length"]?.toIntOrNull()
-            val available = (rawBytes.size - bodyStart).coerceAtLeast(0)
+            val available = (effective.size - bodyStart).coerceAtLeast(0)
             val copyLen = if (contentLength != null) minOf(contentLength, available) else available
-            rawBytes.copyOfRange(bodyStart, bodyStart + copyLen)
+            effective.copyOfRange(bodyStart, bodyStart + copyLen)
         }
 
         return HttpIppResponse(statusCode = statusCode, headers = headers, ippBody = bodyBytes)
     }
 
     fun isHttpResponseComplete(rawBytes: ByteArray): Boolean {
-        val headerEndIdx = findHeaderSeparator(rawBytes) ?: return false
-        val headerText = String(rawBytes, 0, headerEndIdx, StandardCharsets.US_ASCII).lowercase()
+        val effective = stripInterimHttp1xxHeaders(rawBytes)
+        if (effective.isEmpty()) return false
+        val headerEndIdx = findHeaderSeparator(effective) ?: return false
+        val headerText = String(effective, 0, headerEndIdx, StandardCharsets.US_ASCII).lowercase()
         val bodyStart = headerEndIdx + 4
-        if (headerText.contains("transfer-encoding: chunked")) {
-            // Look for terminating chunk "0\r\n\r\n"
-            val tail = String(rawBytes, bodyStart, rawBytes.size - bodyStart, StandardCharsets.ISO_8859_1)
-            return tail.contains("0\r\n\r\n")
+        if (Regex("transfer-encoding:\\s*[^\\r\\n]*chunked").containsMatchIn(headerText)) {
+            return isChunkedBodyComplete(effective, bodyStart)
         }
         val contentLengthRegex = Regex("content-length:\\s*(\\d+)")
         val match = contentLengthRegex.find(headerText)
         if (match != null) {
             val expectedLen = match.groupValues[1].toIntOrNull() ?: return false
-            return rawBytes.size - bodyStart >= expectedLen
+            return effective.size - bodyStart >= expectedLen
+        }
+        return false
+    }
+
+    private fun isHttpResponseCompleteOrUnframed(effectiveBytes: ByteArray): Boolean {
+        if (isHttpResponseComplete(effectiveBytes)) return true
+        return isUnframedIppResponseLikelyComplete(effectiveBytes)
+    }
+
+    private fun isUnframedIppResponseLikelyComplete(rawBytes: ByteArray): Boolean {
+        val effective = stripInterimHttp1xxHeaders(rawBytes)
+        if (effective.isEmpty()) return false
+        val headerEndIdx = findHeaderSeparator(effective) ?: return false
+        val headerText = String(effective, 0, headerEndIdx, StandardCharsets.US_ASCII).lowercase()
+        if (Regex("transfer-encoding:\\s*[^\\r\\n]*chunked").containsMatchIn(headerText)) return false
+        if (Regex("content-length:\\s*\\d+").containsMatchIn(headerText)) return false
+        val bodyStart = headerEndIdx + 4
+        val bodyLen = effective.size - bodyStart
+        if (bodyLen < 9) return false
+        for (i in bodyStart + 8 until effective.size) {
+            if (effective[i] == TAG_END_OF_ATTRIBUTES) return true
+        }
+        return false
+    }
+
+    internal fun stripInterimHttp1xxHeaders(rawBytes: ByteArray): ByteArray {
+        var offset = 0
+        while (offset < rawBytes.size) {
+            val sep = findHeaderSeparator(rawBytes, offset) ?: return ByteArray(0)
+            val statusLine = findCrlf(rawBytes, offset)?.let { lineEnd ->
+                String(rawBytes, offset, lineEnd - offset, StandardCharsets.US_ASCII)
+            } ?: String(rawBytes, offset, sep - offset, StandardCharsets.US_ASCII)
+            val code = statusLine.split(' ', limit = 3).getOrNull(1)?.toIntOrNull() ?: break
+            if (code in 100..199) {
+                offset = sep + 4
+                continue
+            }
+            break
+        }
+        return if (offset == 0) rawBytes else rawBytes.copyOfRange(offset, rawBytes.size)
+    }
+
+    private fun isChunkedBodyComplete(bytes: ByteArray, start: Int): Boolean {
+        var pos = start
+        while (pos < bytes.size) {
+            val crlf = findCrlf(bytes, pos) ?: return false
+            val sizeLine = String(bytes, pos, crlf - pos, StandardCharsets.US_ASCII)
+                .substringBefore(';')
+                .trim()
+            val chunkSize = sizeLine.toIntOrNull(16) ?: return false
+            pos = crlf + 2
+            if (chunkSize == 0) {
+                // Zero-size chunk is followed by CRLF (or trailers + CRLF + CRLF)
+                if (pos + 1 < bytes.size && bytes[pos] == '\r'.code.toByte() && bytes[pos + 1] == '\n'.code.toByte()) {
+                    return true
+                }
+                val trailerEnd = findHeaderSeparator(bytes, pos)
+                return trailerEnd != null
+            }
+            if (pos + chunkSize + 2 > bytes.size) return false
+            pos += chunkSize + 2
         }
         return false
     }
@@ -428,8 +527,8 @@ object IppProtocolCodec {
         return out.toByteArray()
     }
 
-    private fun findHeaderSeparator(bytes: ByteArray): Int? {
-        for (i in 0 until bytes.size - 3) {
+    private fun findHeaderSeparator(bytes: ByteArray, start: Int = 0): Int? {
+        for (i in start until bytes.size - 3) {
             if (bytes[i] == 13.toByte() && bytes[i + 1] == 10.toByte() &&
                 bytes[i + 2] == 13.toByte() && bytes[i + 3] == 10.toByte()
             ) {

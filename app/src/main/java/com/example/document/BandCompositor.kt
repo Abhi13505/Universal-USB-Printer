@@ -54,6 +54,25 @@ object BandCompositor {
     }
 
     /**
+     * Computes symmetric safe-margin inset in device pixels for printers that clip edges
+     * (PCL 5, PCL-XL, PWG Raster). Returns (0f, 0f) when safeMarginMm <= 0f.
+     */
+    fun computeSafeMarginInsetPx(
+        paperWidthMm: Float,
+        paperHeightMm: Float,
+        pageWidthPx: Int,
+        pageHeightPx: Int,
+        safeMarginMm: Float
+    ): Pair<Float, Float> {
+        if (safeMarginMm <= 0f) return 0f to 0f
+        val pxPerMmX = pageWidthPx.toFloat() / paperWidthMm.coerceAtLeast(1f)
+        val pxPerMmY = pageHeightPx.toFloat() / paperHeightMm.coerceAtLeast(1f)
+        val insetX = (safeMarginMm * pxPerMmX).coerceIn(0f, pageWidthPx * 0.25f)
+        val insetY = (safeMarginMm * pxPerMmY).coerceIn(0f, pageHeightPx * 0.25f)
+        return insetX to insetY
+    }
+
+    /**
      * Renders a single 128-line (or remaining tail) ARGB band for a PDF page without ever
      * allocating a full-page 600 DPI bitmap.
      */
@@ -64,10 +83,39 @@ object BandCompositor {
         bandTopY: Int,
         bandHeightPx: Int,
         scaleMode: ScaleMode,
-        tuning: PrintTuningOptions
+        tuning: PrintTuningOptions,
+        paperWidthMm: Float = 210f,
+        paperHeightMm: Float = 297f,
+        safeMarginMm: Float = 0f
     ): IntArray {
         val bandBitmap = Bitmap.createBitmap(pageWidthPx, bandHeightPx, Bitmap.Config.ARGB_8888)
         bandBitmap.eraseColor(Color.WHITE)
+
+        val (insetX, insetY) = computeSafeMarginInsetPx(
+            paperWidthMm = paperWidthMm,
+            paperHeightMm = paperHeightMm,
+            pageWidthPx = pageWidthPx,
+            pageHeightPx = pageHeightPx,
+            safeMarginMm = safeMarginMm
+        )
+        val availW = (pageWidthPx - 2f * insetX).coerceAtLeast(1f)
+        val availH = (pageHeightPx - 2f * insetY).coerceAtLeast(1f)
+
+        val clipLeft = insetX.toInt().coerceIn(0, pageWidthPx)
+        val clipRight = (pageWidthPx - insetX).toInt().coerceIn(0, pageWidthPx)
+        val clipTop = (insetY - bandTopY).toInt().coerceIn(0, bandHeightPx)
+        val clipBottom = (pageHeightPx - insetY - bandTopY).toInt().coerceIn(0, bandHeightPx)
+        val destClip: Rect? = if (safeMarginMm > 0f) {
+            if (clipRight <= clipLeft || clipBottom <= clipTop) {
+                val whitePixels = IntArray(pageWidthPx * bandHeightPx)
+                bandBitmap.getPixels(whitePixels, 0, pageWidthPx, 0, 0, pageWidthPx, bandHeightPx)
+                bandBitmap.recycle()
+                return whitePixels
+            }
+            Rect(clipLeft, clipTop, clipRight, clipBottom)
+        } else {
+            null
+        }
 
         val srcW = pdfPage.width.toFloat().coerceAtLeast(1f)
         val srcH = pdfPage.height.toFloat().coerceAtLeast(1f)
@@ -81,18 +129,18 @@ object BandCompositor {
         val scaleY: Float
         when (scaleMode) {
             ScaleMode.SCALE_TO_FIT -> {
-                val s = minOf(pageWidthPx / effSrcW, pageHeightPx / effSrcH)
+                val s = minOf(availW / effSrcW, availH / effSrcH)
                 scaleX = s
                 scaleY = s
             }
             ScaleMode.CROP_TO_FILL -> {
-                val s = maxOf(pageWidthPx / effSrcW, pageHeightPx / effSrcH)
+                val s = maxOf(availW / effSrcW, availH / effSrcH)
                 scaleX = s
                 scaleY = s
             }
             ScaleMode.STRETCH -> {
-                scaleX = pageWidthPx / effSrcW
-                scaleY = pageHeightPx / effSrcH
+                scaleX = availW / effSrcW
+                scaleY = availH / effSrcH
             }
         }
 
@@ -110,11 +158,11 @@ object BandCompositor {
 
         val drawnW = effSrcW * scaleX
         val drawnH = effSrcH * scaleY
-        val offsetX = (pageWidthPx - drawnW) / 2f
-        val offsetY = (pageHeightPx - drawnH) / 2f - bandTopY.toFloat()
+        val offsetX = insetX + (availW - drawnW) / 2f
+        val offsetY = insetY + (availH - drawnH) / 2f - bandTopY.toFloat()
         matrix.postTranslate(offsetX, offsetY)
 
-        pdfPage.render(bandBitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+        pdfPage.render(bandBitmap, destClip, matrix, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
 
         val pixels = IntArray(pageWidthPx * bandHeightPx)
         bandBitmap.getPixels(pixels, 0, pageWidthPx, 0, 0, pageWidthPx, bandHeightPx)
@@ -124,7 +172,7 @@ object BandCompositor {
 
     /**
      * Renders a single 128-line ARGB band for a Photo Layout sheet page using the exact
-     * millimeter slots from [PhotoLayoutGeometry].
+     * millimeter slots from [PhotoLayoutGeometry], scaled into printable area when safeMarginMm > 0.
      */
     fun renderPhotoSheetBandArgb(
         sheetPlan: PhotoSheetPlan,
@@ -138,14 +186,25 @@ object BandCompositor {
         bandHeightPx: Int,
         cutGuideStyle: CutGuideStyle,
         tuning: PrintTuningOptions,
-        autoRotateToCell: Boolean
+        autoRotateToCell: Boolean,
+        safeMarginMm: Float = 0f
     ): IntArray {
         val bandBitmap = Bitmap.createBitmap(pageWidthPx, bandHeightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bandBitmap)
         canvas.drawColor(Color.WHITE)
 
-        val pxPerMmX = dpiX / 25.4f
-        val pxPerMmY = dpiY / 25.4f
+        val (insetX, insetY) = computeSafeMarginInsetPx(
+            paperWidthMm = sheetPlan.paperWidthMm,
+            paperHeightMm = sheetPlan.paperHeightMm,
+            pageWidthPx = pageWidthPx,
+            pageHeightPx = pageHeightPx,
+            safeMarginMm = safeMarginMm
+        )
+        val contentScaleX = (pageWidthPx - 2f * insetX) / pageWidthPx.toFloat().coerceAtLeast(1f)
+        val contentScaleY = (pageHeightPx - 2f * insetY) / pageHeightPx.toFloat().coerceAtLeast(1f)
+
+        val pxPerMmX = (dpiX / 25.4f) * contentScaleX
+        val pxPerMmY = (dpiY / 25.4f) * contentScaleY
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(255, 70, 70, 70)
@@ -156,10 +215,10 @@ object BandCompositor {
         val bandBottomY = bandTopY + bandHeightPx
 
         for ((cell, photoIdx) in pageAssignment.slots) {
-            val cellLeft = cell.leftMm * pxPerMmX
-            val cellTop = cell.topMm * pxPerMmY
-            val cellRight = (cell.leftMm + cell.widthMm) * pxPerMmX
-            val cellBottom = (cell.topMm + cell.heightMm) * pxPerMmY
+            val cellLeft = insetX + cell.leftMm * pxPerMmX
+            val cellTop = insetY + cell.topMm * pxPerMmY
+            val cellRight = insetX + (cell.leftMm + cell.widthMm) * pxPerMmX
+            val cellBottom = insetY + (cell.topMm + cell.heightMm) * pxPerMmY
 
             if (cellBottom < bandTopY - 12f || cellTop > bandBottomY + 12f) continue
 
@@ -197,13 +256,6 @@ object BandCompositor {
                 val effH = if (totalRot % 180 != 0) srcRect.width().toFloat() else srcRect.height().toFloat()
                 val coverScale = maxOf(destRect.width() / effW, destRect.height() / effH)
 
-                val matrix = Matrix()
-                matrix.postTranslate(-srcRect.exactCenterX(), -srcRect.exactCenterY())
-                matrix.postRotate(totalRot.toFloat())
-                matrix.postScale(coverScale, coverScale)
-                matrix.postTranslate(destRect.centerX(), destRect.centerY())
-
-                // Draw cropped region via subset bitmap or shader-free clipped bitmap
                 val cropped = Bitmap.createBitmap(
                     photo,
                     srcRect.left,
@@ -260,12 +312,30 @@ object BandCompositor {
         pageWidthPx: Int,
         pageHeightPx: Int,
         bandTopY: Int,
-        bandHeightPx: Int
+        bandHeightPx: Int,
+        paperWidthMm: Float = 210f,
+        paperHeightMm: Float = 297f,
+        safeMarginMm: Float = 0f
     ): IntArray {
         val bandBitmap = Bitmap.createBitmap(pageWidthPx, bandHeightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bandBitmap)
+        canvas.drawColor(Color.WHITE)
         canvas.save()
-        canvas.translate(0f, -bandTopY.toFloat())
+        if (safeMarginMm > 0f) {
+            val (insetX, insetY) = computeSafeMarginInsetPx(
+                paperWidthMm = paperWidthMm,
+                paperHeightMm = paperHeightMm,
+                pageWidthPx = pageWidthPx,
+                pageHeightPx = pageHeightPx,
+                safeMarginMm = safeMarginMm
+            )
+            val sx = (pageWidthPx - 2f * insetX) / pageWidthPx.toFloat().coerceAtLeast(1f)
+            val sy = (pageHeightPx - 2f * insetY) / pageHeightPx.toFloat().coerceAtLeast(1f)
+            canvas.translate(insetX, insetY - bandTopY.toFloat())
+            canvas.scale(sx, sy)
+        } else {
+            canvas.translate(0f, -bandTopY.toFloat())
+        }
         DiagnosticSheetRenderer.drawIntoCanvas(
             canvas = canvas,
             pageWidthPx = pageWidthPx.toFloat(),

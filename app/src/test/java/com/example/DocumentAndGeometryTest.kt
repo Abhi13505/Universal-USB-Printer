@@ -74,4 +74,35 @@ class DocumentAndGeometryTest {
         assertFalse(PhotoLayoutGeometry.shouldAutoRotatePhoto(3000, 4000, 50f, 70f, autoRotateEnabled = true))
         assertFalse(PhotoLayoutGeometry.shouldAutoRotatePhoto(4000, 3000, 50f, 70f, autoRotateEnabled = false))
     }
+
+    @Test
+    fun `safe margin defaults to 5mm and applies only to PCL 5, PCL-XL, and PWG Raster`() {
+        assertEquals(5f, com.example.model.PrintTuningOptions().safeMarginMm, 0.001f)
+        assertEquals(300, com.example.encoder.PrintJobStreamer.TEST_PAGE_HEIGHT_PX)
+        assertEquals(300, com.example.encoder.PrintJobStreamer.TEST_PAGE_DPI)
+
+        assertTrue(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.PCL_5C_COLOR))
+        assertTrue(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.PCL_5E_MONO))
+        assertTrue(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.PCL_6_XL))
+        assertTrue(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.IPP_USB_PWG_RASTER))
+
+        assertFalse(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.SAMSUNG_QPDL_0X11))
+        assertFalse(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.SAMSUNG_QPDL_0X13_JBIG1))
+        assertFalse(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.SAMSUNG_QPDL_0X15_COLOR))
+        assertFalse(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.POSTSCRIPT))
+        assertFalse(com.example.encoder.PrintJobStreamer.usesSafeMargin(com.example.model.DriverProtocol.PDF_DIRECT))
+    }
+
+    @Test
+    fun `computeSafeMarginInsetPx converts 5mm margin cleanly and returns zero when disabled`() {
+        val (wPx, hPx) = com.example.document.BandCompositor.alignedPageDimensionsPx(210f, 297f, 600, 600)
+        val (insetX, insetY) = com.example.document.BandCompositor.computeSafeMarginInsetPx(210f, 297f, wPx, hPx, 5f)
+        val expectedApprox = (5f / 25.4f) * 600f // ~118.11 px
+        assertEquals(expectedApprox, insetX, 2.0f)
+        assertEquals(expectedApprox, insetY, 2.0f)
+
+        val (zeroX, zeroY) = com.example.document.BandCompositor.computeSafeMarginInsetPx(210f, 297f, wPx, hPx, 0f)
+        assertEquals(0f, zeroX, 0.001f)
+        assertEquals(0f, zeroY, 0.001f)
+    }
 }

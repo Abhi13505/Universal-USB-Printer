@@ -25,10 +25,12 @@ class AndroidUsbBulkTransport(
     private val inEndpoint: UsbEndpoint?,
     private val chunkSize: Int = 16 * 1024,
     private val writeTimeoutMs: Int = DEFAULT_WRITE_TIMEOUT_MS,
-    private val maxWriteRetries: Int = DEFAULT_MAX_WRITE_RETRIES,
+    private val maxWriteRetriesBeforeFirstByte: Int = DEFAULT_MAX_WRITE_RETRIES,
     private val retryDelayMs: Long = DEFAULT_RETRY_DELAY_MS,
     private val onBytesWritten: ((Int) -> Unit)? = null
 ) : UsbByteTransport {
+
+    private var sessionBytesWritten: Long = 0L
 
     companion object {
         const val DEFAULT_WRITE_TIMEOUT_MS = 60_000
@@ -36,31 +38,37 @@ class AndroidUsbBulkTransport(
         const val DEFAULT_RETRY_DELAY_MS = 250L
 
         /**
-         * Streams [length] bytes starting at [offset] in [chunkSize]-byte slices, retrying transient
-         * timeouts (transfer returning <= 0) up to [maxRetries] times per chunk so busy printers
-         * pausing mid-job to heat up or feed paper do not abort the print stream.
+         * Streams [length] bytes starting at [offset] in [chunkSize]-byte slices.
+         *
+         * Android's UsbDeviceConnection.bulkTransfer() does not report how many bytes were actually
+         * transmitted before a timeout (-1 or 0). Therefore retries are permitted ONLY while
+         * [hasSentAnyByte] is false (before the first byte of the current job succeeds). Once any
+         * byte has been sent, any transfer error or timeout fails immediately without retrying so
+         * the printer stream can never be corrupted with duplicate mid-stream bytes.
          */
-        internal fun writeChunkedWithRetry(
+        internal fun writeChunkedSafely(
             offset: Int,
             length: Int,
             chunkSize: Int,
-            maxRetries: Int,
+            maxRetriesBeforeFirstByte: Int,
             retryDelayMs: Long = DEFAULT_RETRY_DELAY_MS,
+            initialBytesSentInJob: Long = 0L,
             onBytesWritten: ((Int) -> Unit)? = null,
             sleepFn: (Long) -> Unit = Thread::sleep,
             isInterruptedFn: () -> Boolean = { Thread.currentThread().isInterrupted },
             transferChunk: (chunkOffset: Int, chunkLength: Int) -> Int
-        ): Int {
-            var totalWritten = 0
+        ): Long {
+            var totalSentInJob = initialBytesSentInJob
             var cursor = offset
             val end = offset + length
 
             while (cursor < end) {
                 val blockLen = minOf(chunkSize, end - cursor)
+                val allowedRetries = if (totalSentInJob == 0L) maxRetriesBeforeFirstByte else 0
                 var attempt = 0
                 var written = -1
 
-                while (attempt <= maxRetries) {
+                while (attempt <= allowedRetries) {
                     if (isInterruptedFn()) {
                         throw IOException("USB bulk write cancelled at offset $cursor")
                     }
@@ -68,45 +76,44 @@ class AndroidUsbBulkTransport(
                     if (written > 0) {
                         break
                     }
-                    if (attempt < maxRetries) {
-                        if (retryDelayMs > 0L) {
-                            try {
-                                sleepFn(retryDelayMs)
-                            } catch (ie: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                throw IOException("USB bulk write interrupted while waiting to retry", ie)
-                            }
+                    if (attempt < allowedRetries && retryDelayMs > 0L) {
+                        try {
+                            sleepFn(retryDelayMs)
+                        } catch (ie: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            throw IOException("USB bulk write interrupted while waiting to retry", ie)
                         }
                     }
                     attempt++
                 }
 
-                if (written < 0) {
-                    throw IOException(
-                        "USB bulk write failed ($written) at offset $cursor after ${maxRetries + 1} attempts"
-                    )
+                if (written <= 0) {
+                    val msg = if (totalSentInJob > 0L) {
+                        "USB bulk transfer timed out/failed ($written) after $totalSentInJob bytes were already sent; job aborted to avoid duplicating data mid-stream. Please check the printer and reprint."
+                    } else {
+                        "USB bulk write failed ($written) before any job data was sent after ${allowedRetries + 1} attempts."
+                    }
+                    throw IOException(msg)
                 }
-                if (written == 0) {
-                    throw IOException(
-                        "USB bulk write timed out with 0 bytes transferred at offset $cursor after ${maxRetries + 1} attempts"
-                    )
-                }
-                totalWritten += written
+
+                totalSentInJob += written.toLong()
                 cursor += written
                 onBytesWritten?.invoke(written)
             }
-            return totalWritten
+            return totalSentInJob
         }
     }
 
     override fun write(data: ByteArray, offset: Int, length: Int): Int {
         val ep = outEndpoint ?: throw IOException("USB Bulk OUT endpoint unavailable")
-        return writeChunkedWithRetry(
+        val before = sessionBytesWritten
+        sessionBytesWritten = writeChunkedSafely(
             offset = offset,
             length = length,
             chunkSize = chunkSize,
-            maxRetries = maxWriteRetries,
+            maxRetriesBeforeFirstByte = maxWriteRetriesBeforeFirstByte,
             retryDelayMs = retryDelayMs,
+            initialBytesSentInJob = before,
             onBytesWritten = onBytesWritten
         ) { chunkOffset, blockLen ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -120,6 +127,7 @@ class AndroidUsbBulkTransport(
                 connection.bulkTransfer(ep, slice, blockLen, writeTimeoutMs)
             }
         }
+        return (sessionBytesWritten - before).toInt()
     }
 
     override fun read(maxLength: Int, timeoutMs: Int): ByteArray {

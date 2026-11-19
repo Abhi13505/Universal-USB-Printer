@@ -178,7 +178,7 @@ object IppUsbEncoder {
                 colorMode = colorMode,
                 mediaName = paperSize.pwgMediaName,
                 totalPages = totalPages,
-                numCopies = copies
+                numCopies = 1
             )
             writeChunk(pageHeader)
         }

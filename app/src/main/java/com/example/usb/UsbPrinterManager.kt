@@ -359,7 +359,7 @@ class UsbPrinterManager(
             outEndpoint = outEp,
             inEndpoint = inEp,
             writeTimeoutMs = PRINT_BULK_WRITE_TIMEOUT_MS,
-            maxWriteRetries = PRINT_BULK_WRITE_RETRIES,
+            maxWriteRetriesBeforeFirstByte = PRINT_BULK_WRITE_RETRIES,
             onBytesWritten = onBytesWritten
         )
         val cleanup = {
@@ -389,7 +389,7 @@ class UsbPrinterManager(
                 outEndpoint = outEp,
                 inEndpoint = inEp,
                 writeTimeoutMs = PROBE_BULK_WRITE_TIMEOUT_MS,
-                maxWriteRetries = PROBE_BULK_WRITE_RETRIES
+                maxWriteRetriesBeforeFirstByte = PROBE_BULK_WRITE_RETRIES
             )
             val ippBody = IppProtocolCodec.buildGetPrinterAttributesIppPayload()
             val httpHeader = IppProtocolCodec.wrapInHttpPostRequest(ippBody.size.toLong())

@@ -94,6 +94,7 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
     val history by viewModel.printHistory.collectAsStateWithLifecycle()
     val deviceOverride by viewModel.deviceOverride.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+    val lastPrintError by viewModel.lastPrintError.collectAsStateWithLifecycle()
     val showFallbackConfirmDialog by viewModel.showFallbackConfirmDialog.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -224,6 +225,9 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
                                 effectiveMonochrome = effectiveMono,
                                 printProgress = printProgress,
                                 primaryCropBitmap = viewModel.getPrimarySourceBitmapForCrop(),
+                                testPageVerified = deviceOverride.testPageVerified,
+                                lastPrintError = lastPrintError,
+                                onDismissPrintError = viewModel::dismissPrintError,
                                 onScanUsb = viewModel::scanUsb,
                                 onGrantPermission = viewModel::requestUsbPermission,
                                 onPhotosPicked = viewModel::loadPhotos,
@@ -236,11 +240,11 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
                                 onUpdatePdfOptions = viewModel::updatePdfOptions,
                                 onUpdatePhotoLayout = viewModel::updatePhotoLayout,
                                 onStartPrint = viewModel::startPrint,
+                                onPrintTestPage = viewModel::printTestPage,
                                 onCancelPrint = viewModel::cancelPrint,
                                 showFallbackConfirmDialog = showFallbackConfirmDialog,
                                 onDismissFallbackDialog = viewModel::dismissFallbackConfirmDialog,
                                 onPrintTinyProbe = viewModel::printTinyProbeFromFallback,
-                                onConfirmFallbackPrint = viewModel::confirmFallbackAndPrint,
                                 onOpenPrinterSettings = viewModel::openPrinterSettingsFromFallback,
                                 modifier = contentModifier
                             )
@@ -251,9 +255,11 @@ fun UniversalUsbPrinterApp(viewModel: PrintStudioViewModel) {
                                 usbState = usbState,
                                 override = deviceOverride,
                                 history = history,
+                                isPrinting = printProgress.isPrinting,
                                 onScanUsb = viewModel::scanUsb,
                                 onGrantPermission = viewModel::requestUsbPermission,
                                 onSoftReset = viewModel::softResetPrinter,
+                                onPrintTestPage = viewModel::printTestPage,
                                 onPrintDiagnosticSheet = viewModel::printDiagnosticSheetNow,
                                 onSelectProtocolOverride = viewModel::setProtocolOverride,
                                 onSelectColorOverride = viewModel::setColorOverride,

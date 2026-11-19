@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.document.PhotoSheetPlan
 import com.example.model.DitherMode
+import com.example.model.DriverProtocol
 import com.example.model.NormalizedCropRect
 import com.example.model.OutputMode
 import com.example.model.PageOrientation
@@ -95,6 +96,7 @@ import com.example.model.ScaleMode
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
 import com.example.ui.theme.MonoTextStyle
+import com.example.usb.PrinterCapabilityResolver
 import com.example.viewmodel.PrintStudioViewModel
 import com.example.viewmodel.StudioDocument
 
@@ -112,6 +114,9 @@ fun PrintStudioScreen(
     effectiveMonochrome: Boolean,
     printProgress: PrintJobProgress,
     primaryCropBitmap: Bitmap?,
+    testPageVerified: Boolean = false,
+    lastPrintError: String? = null,
+    onDismissPrintError: () -> Unit = {},
     onScanUsb: () -> Unit,
     onGrantPermission: () -> Unit,
     onPhotosPicked: (List<android.net.Uri>) -> Unit,
@@ -124,11 +129,11 @@ fun PrintStudioScreen(
     onUpdatePdfOptions: ((PdfPrintOptions) -> PdfPrintOptions) -> Unit,
     onUpdatePhotoLayout: (PhotoLayoutOptions) -> Unit,
     onStartPrint: () -> Unit,
+    onPrintTestPage: () -> Unit = {},
     onCancelPrint: () -> Unit,
     showFallbackConfirmDialog: Boolean = false,
     onDismissFallbackDialog: () -> Unit = {},
     onPrintTinyProbe: () -> Unit = {},
-    onConfirmFallbackPrint: () -> Unit = {},
     onOpenPrinterSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -136,6 +141,8 @@ fun PrintStudioScreen(
     var showCropDialog by remember { mutableStateOf(false) }
     var showPhotoLayoutDialog by remember { mutableStateOf(false) }
     var tuningExpanded by remember { mutableStateOf(true) }
+    val isUnsupportedPrinter = usbState is UsbPrinterState.Ready &&
+        usbState.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20)
@@ -184,7 +191,7 @@ fun PrintStudioScreen(
             containerColor = studio.cardSurface,
             title = {
                 Text(
-                    text = "Unverified Printer Language",
+                    text = "1-Inch Test Page Required",
                     style = MaterialTheme.typography.titleLarge,
                     color = studio.primaryInk
                 )
@@ -197,7 +204,7 @@ fun PrintStudioScreen(
                         color = studio.primaryInk
                     )
                     Text(
-                        text = "Guessed protocol: ${profile.effectiveProtocol.displayName}. To avoid wasting paper on raw @PJL or garbage lines, send a tiny 1-band probe first or choose a language in the Printer tab.",
+                        text = "Before sending the first full job on this printer, print the 1-inch (300 px @ 300 DPI) test strip using ${profile.effectiveProtocol.displayName} so you can verify output cleanly.",
                         style = MaterialTheme.typography.bodySmall,
                         color = studio.mutedGraphite
                     )
@@ -216,16 +223,7 @@ fun PrintStudioScreen(
                             .height(48.dp)
                             .testTag("fallback_probe_button")
                     ) {
-                        Text("Send Tiny 1-Band Probe (Recommended)")
-                    }
-                    FilledTonalButton(
-                        onClick = onConfirmFallbackPrint,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("fallback_confirm_print_button")
-                    ) {
-                        Text("Trust ${profile.effectiveProtocol.shortCode} & Print Full Job")
+                        Text(stringResource(R.string.action_print_test_page))
                     }
                     OutlinedButton(
                         onClick = onOpenPrinterSettings,
@@ -257,13 +255,101 @@ fun PrintStudioScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Clean Printer Status Header (Zero driver jargon on main screen)
+        // 1. Clean Printer Status Header
         PrinterStatusHeaderCard(
             usbState = usbState,
             effectiveMonochrome = effectiveMonochrome,
+            testPageVerified = testPageVerified,
             onScanUsb = onScanUsb,
             onGrantPermission = onGrantPermission
         )
+
+        if (isUnsupportedPrinter && usbState is UsbPrinterState.Ready) {
+            StudioSectionCard {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .background(studio.crimsonSoft)
+                        .padding(12.dp)
+                        .testTag("unsupported_printer_banner"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Unsupported Printer Language",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = studio.crimson,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = usbState.profile.unverifiedLanguageWarning
+                            ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = studio.crimson
+                    )
+                    OutlinedButton(
+                        onClick = onOpenPrinterSettings,
+                        border = BorderStroke(1.dp, studio.crimson),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("unsupported_open_settings_button")
+                    ) {
+                        Text("Select Manual Protocol Override", color = studio.crimson)
+                    }
+                }
+            }
+        }
+
+        if (!lastPrintError.isNullOrBlank()) {
+            StudioSectionCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .background(studio.crimsonSoft)
+                        .padding(12.dp)
+                        .testTag("print_error_banner"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = lastPrintError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = studio.crimson,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = onDismissPrintError,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("dismiss_print_error_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Dismiss print error",
+                            tint = studio.crimson
+                        )
+                    }
+                }
+            }
+        }
+
+        if (usbState is UsbPrinterState.Ready && !isUnsupportedPrinter) {
+            OutlinedButton(
+                onClick = onPrintTestPage,
+                enabled = !printProgress.isPrinting,
+                border = BorderStroke(1.dp, studio.activeAccent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("print_test_page_button")
+            ) {
+                Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.action_print_test_page))
+            }
+        }
 
         // 2. Document Source Actions
         Row(
@@ -581,6 +667,33 @@ fun PrintStudioScreen(
                                 modifier = Modifier.testTag("contrast_slider")
                             )
                         }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Safe Margin (PCL 5 / PCL-XL / PWG)", style = MaterialTheme.typography.labelMedium, color = studio.mutedGraphite)
+                                Text(
+                                    text = "${tuning.safeMarginMm.toInt()} mm",
+                                    style = MonoTextStyle,
+                                    color = studio.primaryInk
+                                )
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(0, 4, 5, 8, 10).forEach { mm ->
+                                    StudioChoiceChip(
+                                        label = "${mm} mm",
+                                        selected = kotlin.math.abs(tuning.safeMarginMm - mm) < 0.2f,
+                                        onClick = { onUpdateTuning { it.copy(safeMarginMm = mm.toFloat()) } },
+                                        testTag = "safe_margin_${mm}mm"
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -776,6 +889,7 @@ fun PrintStudioScreen(
                 } else {
                     Button(
                         onClick = onStartPrint,
+                        enabled = !isUnsupportedPrinter,
                         colors = ButtonDefaults.buttonColors(containerColor = studio.primaryInk),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -785,8 +899,9 @@ fun PrintStudioScreen(
                         Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = when (usbState) {
-                                is UsbPrinterState.PermissionRequired -> stringResource(R.string.action_grant_usb)
+                            text = when {
+                                isUnsupportedPrinter -> "Unsupported Language (Choose Override)"
+                                usbState is UsbPrinterState.PermissionRequired -> stringResource(R.string.action_grant_usb)
                                 else -> stringResource(R.string.action_print_now)
                             },
                             fontWeight = FontWeight.SemiBold

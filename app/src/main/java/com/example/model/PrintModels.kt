@@ -16,10 +16,11 @@ enum class DriverProtocol(
     POSTSCRIPT("PostScript Level 2/3", "PS", true, false),
     SAMSUNG_QPDL_0X11("Samsung QPDL (0x11 Algo0x11)", "QPDL-11", false, false),
     SAMSUNG_QPDL_0X13_JBIG1("Samsung QPDL (0x13 JBIG1)", "QPDL-13", false, false),
-    SAMSUNG_QPDL_0X15_COLOR("Samsung QPDL (0x15 Color)", "QPDL-15", true, false);
+    SAMSUNG_QPDL_0X15_COLOR("Samsung QPDL (0x15 Color)", "QPDL-15", true, false),
+    UNSUPPORTED("Unsupported Printer Language", "UNSUPP", false, false);
 
     companion object {
-        val manualSelectableEntries: List<DriverProtocol> = entries.toList()
+        val manualSelectableEntries: List<DriverProtocol> = entries.filter { it != UNSUPPORTED }
     }
 }
 
@@ -105,7 +106,8 @@ data class PrintTuningOptions(
     val brightness: Float = 0f, // -0.5f .. +0.5f
     val contrast: Float = 1f,   // 0.5f .. 2.0f
     val rotationDegrees: Int = 0, // 0, 90, 180, 270
-    val cropRect: NormalizedCropRect = NormalizedCropRect()
+    val cropRect: NormalizedCropRect = NormalizedCropRect(),
+    val safeMarginMm: Float = 5f // Safe printable margin inset for PCL 5, PCL-XL, and PWG raster
 )
 
 data class PdfPrintOptions(

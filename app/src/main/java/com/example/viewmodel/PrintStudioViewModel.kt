@@ -35,7 +35,10 @@ import com.example.model.PrintJobProgress
 import com.example.model.PrintJobStatus
 import com.example.model.PrintQuality
 import com.example.model.PrintTuningOptions
+import com.example.model.ScaleMode
+import com.example.model.UsbDeviceInfo
 import com.example.model.UsbPrinterState
+import com.example.usb.PrinterCapabilityResolver
 import com.example.usb.UsbPrinterManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -117,6 +120,9 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
+    private val _lastPrintError = MutableStateFlow<String?>(null)
+    val lastPrintError: StateFlow<String?> = _lastPrintError.asStateFlow()
+
     private val _showFallbackConfirmDialog = MutableStateFlow(false)
     val showFallbackConfirmDialog: StateFlow<Boolean> = _showFallbackConfirmDialog.asStateFlow()
 
@@ -161,6 +167,10 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
 
     fun consumeSnackbar() {
         _snackbarMessage.value = null
+    }
+
+    fun dismissPrintError() {
+        _lastPrintError.value = null
     }
 
     fun scanUsb() {
@@ -363,6 +373,12 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             val doc = _document.value
             val tuningVal = _tuning.value
             val effectiveMono = isEffectiveMonochrome()
+            val activeProtocol = (usbState.value as? UsbPrinterState.Ready)?.profile?.effectiveProtocol
+            val previewMarginMm = if (activeProtocol == null || PrintJobStreamer.usesSafeMargin(activeProtocol)) {
+                tuningVal.safeMarginMm
+            } else {
+                0f
+            }
 
             when (doc) {
                 StudioDocument.Empty -> {
@@ -393,7 +409,10 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
                                             bandTopY = 0,
                                             bandHeightPx = h,
                                             scaleMode = opts.scaleMode,
-                                            tuning = tuningVal
+                                            tuning = tuningVal,
+                                            paperWidthMm = mmW,
+                                            paperHeightMm = mmH,
+                                            safeMarginMm = previewMarginMm
                                         )
                                     },
                                     paperWidthMm = mmW,
@@ -438,7 +457,8 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
                                 bandHeightPx = h,
                                 cutGuideStyle = opts.cutGuideStyle,
                                 tuning = tuningVal,
-                                autoRotateToCell = opts.autoRotateToCell
+                                autoRotateToCell = opts.autoRotateToCell,
+                                safeMarginMm = previewMarginMm
                             )
                         },
                         paperWidthMm = plan.paperWidthMm,
@@ -455,14 +475,16 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
                     val meta = buildDiagnosticMetadata(PaperSize.A4, PrintQuality.STANDARD_600)
                     val preview = BandCompositor.renderPreviewBitmap(
                         sourcePixelsRenderer = { w, h ->
-                            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                            val canvas = Canvas(bmp)
-                            canvas.drawColor(Color.WHITE)
-                            DiagnosticSheetRenderer.drawIntoCanvas(canvas, w.toFloat(), h.toFloat(), meta)
-                            val px = IntArray(w * h)
-                            bmp.getPixels(px, 0, w, 0, 0, w, h)
-                            bmp.recycle()
-                            px
+                            BandCompositor.renderDiagnosticBandArgb(
+                                metadata = meta,
+                                pageWidthPx = w,
+                                pageHeightPx = h,
+                                bandTopY = 0,
+                                bandHeightPx = h,
+                                paperWidthMm = PaperSize.A4.widthMm,
+                                paperHeightMm = PaperSize.A4.heightMm,
+                                safeMarginMm = previewMarginMm
+                            )
                         },
                         paperWidthMm = PaperSize.A4.widthMm,
                         paperHeightMm = PaperSize.A4.heightMm,
@@ -486,37 +508,51 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _snackbarMessage.value = "Connect a USB OTG printer before printing."
             return
         }
+        if (state.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED) {
+            val msg = state.profile.unverifiedLanguageWarning ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE
+            _lastPrintError.value = msg
+            _snackbarMessage.value = msg
+            return
+        }
         if (_document.value is StudioDocument.Empty) {
             _snackbarMessage.value = "Select photos, open a PDF, or load a Diagnostic Sheet first."
             return
         }
-        // Prevent wasted paper on host-based/unverified fallback printers by asking first
-        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+        // Require a 1-inch test page verification before the first full job on any printer other
+        // than the hardware-verified Samsung SCX-3200 (0x04E8:0x3441).
+        if (requiresTestPageBeforeFullJob(state.deviceInfo, _deviceOverride.value.testPageVerified)) {
             _showFallbackConfirmDialog.value = true
             return
         }
         executePrintDocument(_document.value, state)
     }
 
+    fun printTestPage() {
+        val state = usbState.value
+        if (state is UsbPrinterState.PermissionRequired) {
+            usbPrinterManager.requestUsbPermission()
+            return
+        }
+        if (state !is UsbPrinterState.Ready) {
+            _snackbarMessage.value = "Connect a USB OTG printer to print the 1-inch test page."
+            return
+        }
+        if (state.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED) {
+            val msg = state.profile.unverifiedLanguageWarning ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE
+            _lastPrintError.value = msg
+            _snackbarMessage.value = msg
+            return
+        }
+        _showFallbackConfirmDialog.value = false
+        executeTestPageJob(state)
+    }
+
     fun dismissFallbackConfirmDialog() {
         _showFallbackConfirmDialog.value = false
     }
 
-    fun confirmFallbackAndPrint() {
-        _showFallbackConfirmDialog.value = false
-        val state = usbState.value as? UsbPrinterState.Ready ?: return
-        val doc = _document.value
-        if (doc is StudioDocument.Empty) return
-        viewModelScope.launch {
-            preferencesStore.setProtocolOverride(state.deviceInfo.vidPidKey, state.profile.effectiveProtocol)
-        }
-        executePrintDocument(doc, state)
-    }
-
     fun printTinyProbeFromFallback() {
-        _showFallbackConfirmDialog.value = false
-        val state = usbState.value as? UsbPrinterState.Ready ?: return
-        executeTinyProbeJob(state)
+        printTestPage()
     }
 
     fun openPrinterSettingsFromFallback() {
@@ -534,7 +570,13 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _snackbarMessage.value = "Connect a USB OTG printer to print the diagnostic sheet."
             return
         }
-        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+        if (state.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED) {
+            val msg = state.profile.unverifiedLanguageWarning ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE
+            _lastPrintError.value = msg
+            _snackbarMessage.value = msg
+            return
+        }
+        if (requiresTestPageBeforeFullJob(state.deviceInfo, _deviceOverride.value.testPageVerified)) {
             _document.value = StudioDocument.DiagnosticSheet
             _showFallbackConfirmDialog.value = true
             return
@@ -546,8 +588,9 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
         printJob?.cancel()
     }
 
-    private fun executeTinyProbeJob(state: UsbPrinterState.Ready) {
+    private fun executeTestPageJob(state: UsbPrinterState.Ready) {
         if (_printProgress.value.isPrinting) return
+        _lastPrintError.value = null
         val bytesCounter = AtomicLong(0L)
         val protocol = state.profile.effectiveProtocol
         val opened = usbPrinterManager.openPrintTransport(protocol) { written ->
@@ -555,42 +598,49 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _printProgress.value = _printProgress.value.copy(bytesSent = curr)
         }
         if (opened == null) {
-            _snackbarMessage.value = "Failed to claim USB printer interface."
+            val err = "Failed to claim USB printer interface."
+            _lastPrintError.value = err
+            _snackbarMessage.value = err
             return
         }
         val (transport, cleanup) = opened
         val effectiveMono = isEffectiveMonochrome()
+        val safeMarginMm = _tuning.value.safeMarginMm
 
         printJob = viewModelScope.launch(Dispatchers.IO) {
             var status = PrintJobStatus.COMPLETED
             try {
-                PrintJobStreamer.streamTinyProbeJob(
+                PrintJobStreamer.streamTestPageJob(
                     transport = transport,
                     printerName = state.profile.makeAndModel,
                     protocol = protocol,
                     effectiveMonochrome = effectiveMono,
                     paperSize = PaperSize.A4,
+                    safeMarginMm = safeMarginMm,
                     onProgress = { prog ->
                         _printProgress.value = prog.copy(bytesSent = bytesCounter.get())
                     }
                 )
+                preferencesStore.setTestPageVerified(state.deviceInfo.vidPidKey, true)
                 _snackbarMessage.value =
-                    "1-band probe sent (${formatBytes(bytesCounter.get())}). If it printed cleanly, confirm the language to print your full job."
+                    "1-inch test page verified (${formatBytes(bytesCounter.get())}). Full print jobs are now unlocked for ${state.profile.makeAndModel}."
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 status = PrintJobStatus.CANCELLED
-                _snackbarMessage.value = "Probe cancelled."
+                _snackbarMessage.value = "Test page cancelled."
             } catch (e: Exception) {
                 status = PrintJobStatus.FAILED
-                _snackbarMessage.value = "Probe failed: ${e.message}"
+                val errMsg = e.message ?: "Test page failed."
+                _lastPrintError.value = errMsg
+                _snackbarMessage.value = errMsg
             } finally {
                 cleanup()
                 historyRepo.recordJob(
                     PrintHistoryEntity(
-                        documentTitle = "1-Band Protocol Probe",
+                        documentTitle = "1-Inch Test Page",
                         pageCount = 1,
                         copies = 1,
                         paperSize = PaperSize.A4.displayName,
-                        resolvedProtocol = "${protocol.displayName} (Probe)",
+                        resolvedProtocol = "${protocol.displayName} (Test Page)",
                         colorMode = if (effectiveMono) "Monochrome" else "Color",
                         bytesSent = bytesCounter.get(),
                         status = status.displayName
@@ -603,6 +653,7 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun executePrintDocument(doc: StudioDocument, state: UsbPrinterState.Ready) {
         if (_printProgress.value.isPrinting) return
+        _lastPrintError.value = null
         val bytesCounter = AtomicLong(0L)
         val protocol = state.profile.effectiveProtocol
         val opened = usbPrinterManager.openPrintTransport(protocol) { written ->
@@ -610,7 +661,9 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
             _printProgress.value = _printProgress.value.copy(bytesSent = curr)
         }
         if (opened == null) {
-            _snackbarMessage.value = "Failed to claim USB printer interface."
+            val err = "Failed to claim USB printer interface."
+            _lastPrintError.value = err
+            _snackbarMessage.value = err
             return
         }
         val (transport, cleanup) = opened
@@ -728,7 +781,9 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
                 _snackbarMessage.value = "Print job cancelled."
             } catch (e: Exception) {
                 status = PrintJobStatus.FAILED
-                _snackbarMessage.value = "Print failed: ${e.message}"
+                val errMsg = e.message ?: "Print failed"
+                _lastPrintError.value = errMsg
+                _snackbarMessage.value = errMsg
             } finally {
                 cleanup()
                 historyRepo.recordJob(
@@ -815,6 +870,10 @@ class PrintStudioViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     companion object {
+        fun requiresTestPageBeforeFullJob(deviceInfo: UsbDeviceInfo, testPageVerified: Boolean): Boolean {
+            return !PrinterCapabilityResolver.isHardwareVerifiedPrinter(deviceInfo) && !testPageVerified
+        }
+
         fun formatBytes(bytes: Long): String {
             return when {
                 bytes >= 1024 * 1024 -> "%.2f MB".format(bytes / (1024.0 * 1024.0))

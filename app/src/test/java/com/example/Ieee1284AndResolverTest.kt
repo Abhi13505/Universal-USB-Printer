@@ -79,13 +79,64 @@ class Ieee1284AndResolverTest {
     }
 
     @Test
-    fun `resolver rejects PCL 3 as verified PCL 5 and flags fallback warning`() {
-        val pcl3Inkjet = UsbDeviceInfo(12, 0x03F0, 0x1111, "/dev/usb", "DeskJet 2700", "HP", false, true, 2)
-        val ieeePcl3 = Ieee1284Info(manufacturer = "HP", model = "DeskJet 2700", commandSetTokens = listOf("PCL3GUI", "PJL"))
-        val profile = PrinterCapabilityResolver.resolve(pcl3Inkjet, ieeePcl3, null)
-        assertTrue(profile.isBestEffortFallback)
-        assertNotNull(profile.unverifiedLanguageWarning)
-        assertTrue(profile.unverifiedLanguageWarning!!.contains("PCL 3"))
+    fun `resolver marks PCL 3 and proprietary host-based command sets UNSUPPORTED unless overridden`() {
+        val unsupportedCmdSets = listOf(
+            listOf("PCL3GUI", "PJL"),
+            listOf("PCL3"),
+            listOf("PCL 3"),
+            listOf("ZJS"),
+            listOf("ZJSTREAM"),
+            listOf("CAPT"),
+            listOf("UFR"),
+            listOf("UFRII"),
+            listOf("GDI"),
+            listOf("ESCPR"),
+            listOf("ESC/P"),
+            listOf("LIDIL"),
+            listOf("HBP")
+        )
+        for (tokens in unsupportedCmdSets) {
+            val device = UsbDeviceInfo(12, 0x03F0, 0x1111, "/dev/usb", "Host Printer", "Vendor", false, true, 2)
+            val ieee = Ieee1284Info(manufacturer = "Vendor", model = "Host Printer", commandSetTokens = tokens)
+            val profile = PrinterCapabilityResolver.resolve(device, ieee, null)
+            assertEquals("Expected UNSUPPORTED for CMD $tokens", DriverProtocol.UNSUPPORTED, profile.effectiveProtocol)
+            assertNotNull(profile.unverifiedLanguageWarning)
+            assertTrue(
+                profile.unverifiedLanguageWarning!!.contains(PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE)
+            )
+        }
+
+        // Manual override unblocks an UNSUPPORTED printer
+        val overridden = PrinterCapabilityResolver.resolve(
+            deviceInfo = UsbDeviceInfo(13, 0x03F0, 0x1111, "/dev/usb", "Host Printer", "HP", false, true, 2),
+            ieee1284 = Ieee1284Info(commandSetTokens = listOf("LIDIL")),
+            ipp = null,
+            override = PrinterDeviceOverride(protocolOverride = DriverProtocol.PCL_5E_MONO)
+        )
+        assertEquals(DriverProtocol.PCL_5E_MONO, overridden.effectiveProtocol)
+        assertFalse(DriverProtocol.manualSelectableEntries.contains(DriverProtocol.UNSUPPORTED))
+    }
+
+    @Test
+    fun `resolver marks URF-only or image-only IPP-USB printers UNSUPPORTED instead of IPP_USB_PDF`() {
+        val urfDevice = UsbDeviceInfo(14, 0x04A9, 0x2222, "/dev/usb", "AirPrintOnly", "Canon", true, true, 4)
+        val urfOnlyIpp = IppCapabilities("Canon URF", true, listOf("image/urf", "image/jpeg"), 600)
+        val profile = PrinterCapabilityResolver.resolve(urfDevice, Ieee1284Info(), urfOnlyIpp)
+        assertEquals(DriverProtocol.UNSUPPORTED, profile.effectiveProtocol)
+        assertTrue(profile.resolutionReason.contains(PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE))
+        assertTrue(profile.unverifiedLanguageWarning!!.contains(PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE))
+    }
+
+    @Test
+    fun `test page verification is waived only for Samsung SCX-3200 unless verified in DataStore`() {
+        val scx3200 = UsbDeviceInfo(1, 0x04E8, 0x3441, "/dev/usb", "SCX-3200", "Samsung", false, true, 2)
+        val otherPrinter = UsbDeviceInfo(2, 0x03F0, 0x1234, "/dev/usb", "LaserJet", "HP", false, true, 2)
+
+        assertTrue(PrinterCapabilityResolver.isHardwareVerifiedPrinter(scx3200))
+        assertFalse(PrinterCapabilityResolver.isHardwareVerifiedPrinter(otherPrinter))
+        assertFalse(com.example.viewmodel.PrintStudioViewModel.requiresTestPageBeforeFullJob(scx3200, testPageVerified = false))
+        assertTrue(com.example.viewmodel.PrintStudioViewModel.requiresTestPageBeforeFullJob(otherPrinter, testPageVerified = false))
+        assertFalse(com.example.viewmodel.PrintStudioViewModel.requiresTestPageBeforeFullJob(otherPrinter, testPageVerified = true))
     }
 
     @Test

@@ -24,53 +24,98 @@ class UsbTransportAndProtocolIndexTest {
     }
 
     @Test
-    fun `writeChunkedWithRetry recovers from transient timeouts when printer pauses`() {
-        val attemptsPerOffset = mutableMapOf<Int, Int>()
+    fun `writeChunkedSafely allows retries before the first byte of the job`() {
+        var firstChunkAttempts = 0
+        var secondChunkAttempts = 0
         var reportedBytes = 0
 
-        val total = AndroidUsbBulkTransport.writeChunkedWithRetry(
+        val totalInJob = AndroidUsbBulkTransport.writeChunkedSafely(
             offset = 0,
             length = 25,
             chunkSize = 10,
-            maxRetries = 2,
+            maxRetriesBeforeFirstByte = 2,
             retryDelayMs = 0L,
+            initialBytesSentInJob = 0L,
             onBytesWritten = { reportedBytes += it },
             sleepFn = {}
         ) { chunkOffset, chunkLength ->
-            val count = (attemptsPerOffset[chunkOffset] ?: 0) + 1
-            attemptsPerOffset[chunkOffset] = count
-            // Simulate printer pausing and timing out twice on the second chunk before accepting it
-            if (chunkOffset == 10 && count <= 2) {
-                -1
+            if (chunkOffset == 0) {
+                firstChunkAttempts++
+                // Transient timeouts BEFORE any byte of the job has succeeded may retry
+                if (firstChunkAttempts <= 2) -1 else chunkLength
             } else {
+                secondChunkAttempts++
                 chunkLength
             }
         }
 
-        assertEquals(25, total)
+        assertEquals(25L, totalInJob)
         assertEquals(25, reportedBytes)
-        assertEquals(1, attemptsPerOffset[0])
-        assertEquals(3, attemptsPerOffset[10])
-        assertEquals(1, attemptsPerOffset[20])
+        assertEquals(3, firstChunkAttempts)
+        assertEquals(2, secondChunkAttempts) // offset 10 (10 bytes) + offset 20 (5 bytes)
     }
 
     @Test
-    fun `writeChunkedWithRetry throws IOException after exhausting retries`() {
-        var calls = 0
+    fun `writeChunkedSafely aborts immediately without retry once any byte has been sent`() {
+        val attemptsPerOffset = mutableMapOf<Int, Int>()
         try {
-            AndroidUsbBulkTransport.writeChunkedWithRetry(
+            AndroidUsbBulkTransport.writeChunkedSafely(
+                offset = 0,
+                length = 25,
+                chunkSize = 10,
+                maxRetriesBeforeFirstByte = 2,
+                retryDelayMs = 0L,
+                initialBytesSentInJob = 0L,
+                sleepFn = {}
+            ) { chunkOffset, chunkLength ->
+                attemptsPerOffset[chunkOffset] = (attemptsPerOffset[chunkOffset] ?: 0) + 1
+                if (chunkOffset == 0) chunkLength else -1
+            }
+            fail("Expected IOException when second chunk times out after first chunk wrote bytes")
+        } catch (expected: IOException) {
+            assertEquals(1, attemptsPerOffset[0])
+            assertEquals(1, attemptsPerOffset[10]) // Zero retries once >0 bytes were written!
+        }
+
+        // Also test subsequent write() call in same job session where initialBytesSentInJob > 0
+        var subsequentAttempts = 0
+        try {
+            AndroidUsbBulkTransport.writeChunkedSafely(
                 offset = 0,
                 length = 10,
                 chunkSize = 10,
-                maxRetries = 2,
+                maxRetriesBeforeFirstByte = 2,
                 retryDelayMs = 0L,
+                initialBytesSentInJob = 100L,
+                sleepFn = {}
+            ) { _, _ ->
+                subsequentAttempts++
+                -1
+            }
+            fail("Expected IOException without retry when initialBytesSentInJob > 0")
+        } catch (_: IOException) {
+            assertEquals(1, subsequentAttempts)
+        }
+    }
+
+    @Test
+    fun `writeChunkedSafely throws IOException after exhausting initial retries before first byte`() {
+        var calls = 0
+        try {
+            AndroidUsbBulkTransport.writeChunkedSafely(
+                offset = 0,
+                length = 10,
+                chunkSize = 10,
+                maxRetriesBeforeFirstByte = 2,
+                retryDelayMs = 0L,
+                initialBytesSentInJob = 0L,
                 sleepFn = {}
             ) { _, _ ->
                 calls++
                 0
             }
             fail("Expected IOException when retries are exhausted")
-        } catch (expected: IOException) {
+        } catch (_: IOException) {
             assertEquals(3, calls)
         }
     }

@@ -19,6 +19,13 @@ object PrinterCapabilityResolver {
     const val VID_CANON = 0x04A9
     const val VID_EPSON = 0x04B8
 
+    const val UNSUPPORTED_DRIVER_MESSAGE =
+        "This printer needs a manufacturer driver and cannot be driven over USB by this app"
+
+    fun isHardwareVerifiedPrinter(deviceInfo: UsbDeviceInfo): Boolean {
+        return deviceInfo.vendorId == VID_SAMSUNG && deviceInfo.productId == PID_SAMSUNG_SCX3200
+    }
+
     fun resolve(
         deviceInfo: UsbDeviceInfo,
         ieee1284: Ieee1284Info,
@@ -35,7 +42,8 @@ object PrinterCapabilityResolver {
             ipp = ipp
         )
 
-        val hasManualProtocol = override.protocolOverride != DriverProtocol.AUTO_DETECTED
+        val hasManualProtocol = override.protocolOverride != DriverProtocol.AUTO_DETECTED &&
+            override.protocolOverride != DriverProtocol.UNSUPPORTED
         val effectiveProtocol = if (hasManualProtocol) {
             override.protocolOverride
         } else {
@@ -70,7 +78,7 @@ object PrinterCapabilityResolver {
             isBestEffortFallback = if (hasManualProtocol) false else autoRes.isFallback,
             overrideActive = overrideActive,
             activeInterfaceLabel = interfaceLabel,
-            resolutionReason = if (overrideActive) "Manual override active" else autoRes.reason,
+            resolutionReason = if (hasManualProtocol) "Manual override active" else autoRes.reason,
             unverifiedLanguageWarning = if (hasManualProtocol) null else autoRes.warning
         )
     }
@@ -90,19 +98,21 @@ object PrinterCapabilityResolver {
         ipp: IppCapabilities?
     ): AutoResolution {
         val hasQpdl = cmdTokens.any { it.contains("QPDL") || it == "SPL" || it.startsWith("SPL") }
-        val hasIppFormats = deviceInfo.hasIppInterface && (
-            ipp == null ||
-                ipp.documentFormatsSupported.isEmpty() ||
-                ipp.documentFormatsSupported.any {
-                    it.contains("pwg-raster") || it.contains("pdf") || it.contains("urf")
-                }
-            )
+        val supportsPwgRaster = ipp?.documentFormatsSupported?.any { it.contains("pwg-raster") } == true
+        val supportsPdfIpp = ipp?.documentFormatsSupported?.any {
+            it == "application/pdf" || it.endsWith("/pdf")
+        } == true
+        val hasSupportedIppFormat = deviceInfo.hasIppInterface && (supportsPwgRaster || supportsPdfIpp)
+        val ippOnlyUnsupportedFormats = deviceInfo.hasIppInterface &&
+            ipp != null &&
+            ipp.documentFormatsSupported.isNotEmpty() &&
+            !supportsPwgRaster &&
+            !supportsPdfIpp
+
         val hasPdfCmd = cmdTokens.any { it == "PDF" || it.contains("PDF") }
         val hasPcl6 = cmdTokens.any { it.contains("PCL6") || it.contains("PCLXL") || it.contains("PCL-XL") || it == "XL" }
         val hasPcl5c = cmdTokens.any { it.contains("PCL5C") || it.contains("PCL 5C") }
         val hasPcl5e = cmdTokens.any { it.contains("PCL5E") || it.contains("PCL 5E") }
-        // Exclude PCL 3 / PCL 3 GUI — older inkjet language that is NOT compatible with PCL 5
-        val hasPcl3Only = cmdTokens.any { it.startsWith("PCL3") || it.contains("PCL 3") }
         val hasPcl5Generic = cmdTokens.any {
             it == "PCL5" || it == "PCL 5" || it == "PCL"
         }
@@ -110,11 +120,27 @@ object PrinterCapabilityResolver {
             it.contains("POSTSCRIPT") || it == "PS" || it == "PS2" || it == "PS3" || it.contains("BR-SCRIPT")
         }
 
-        // 1. IPP-USB (7/1/4) present with PWG Raster / PDF
-        if (deviceInfo.hasIppInterface && hasIppFormats) {
+        // Known unsupported / proprietary / inkjet command sets
+        val unsupportedMatches = cmdTokens.filter { token ->
+            val compact = token.replace(" ", "").replace("-", "")
+            compact.contains("ZJSTREAM") ||
+                compact == "ZJS" || compact.startsWith("ZJS") ||
+                compact.contains("CAPT") ||
+                compact.contains("UFRII") || compact == "UFR" || compact.startsWith("UFR") ||
+                compact == "GDI" || compact.contains("GDIPRINTER") ||
+                compact.contains("ESCPR") || token.contains("ESC/P") || compact.contains("ESCP") ||
+                compact.contains("LIDIL") ||
+                compact == "HBP" || compact.contains("HBP")
+        }
+        val hasPcl3Only = cmdTokens.any {
+            val compact = tokenNormalize(it)
+            compact.startsWith("PCL3") || it.contains("PCL 3")
+        } && !hasPcl5c && !hasPcl5e && !hasPcl5Generic && !hasPcl6
+
+        // 1. IPP-USB (7/1/4) ONLY when PWG Raster or PDF is genuinely supported (never treat "urf" as supported!)
+        if (hasSupportedIppFormat) {
             val supportsColor = ipp?.colorSupported ?: true
-            val supportsPwg = ipp?.documentFormatsSupported?.any { it.contains("pwg-raster") } ?: true
-            val protocol = if (supportsPwg) {
+            val protocol = if (supportsPwgRaster) {
                 DriverProtocol.IPP_USB_PWG_RASTER
             } else {
                 DriverProtocol.IPP_USB_PDF
@@ -127,7 +153,23 @@ object PrinterCapabilityResolver {
             )
         }
 
-        // 2. Explicit standard PDLs reported in IEEE 1284 CMD (PDF, PCL 6, PCL 5, PostScript)
+        // 2. If printer lists ONLY unsupported host/proprietary command tokens (ZJS, CAPT, UFR, GDI, ESCPR, ESC/P, LIDIL, HBP)
+        // or ONLY PCL3 / PCL3GUI without any supported standard PDL, block as UNSUPPORTED.
+        val hasAnyStandardPdl = hasPdfCmd || hasPcl6 || hasPcl5c || hasPcl5e || hasPcl5Generic || hasPostScript || hasQpdl
+        if ((unsupportedMatches.isNotEmpty() || hasPcl3Only) && !hasAnyStandardPdl) {
+            val detectedDesc = (unsupportedMatches + if (hasPcl3Only) cmdTokens.filter { tokenNormalize(it).contains("PCL3") } else emptyList())
+                .distinct()
+                .joinToString(", ")
+            return AutoResolution(
+                protocol = DriverProtocol.UNSUPPORTED,
+                colorSupported = false,
+                isFallback = false,
+                reason = "$UNSUPPORTED_DRIVER_MESSAGE ($detectedDesc)",
+                warning = "$UNSUPPORTED_DRIVER_MESSAGE (reported CMD: $detectedDesc)."
+            )
+        }
+
+        // 3. Explicit standard PDLs reported in IEEE 1284 CMD (PDF, PCL 6, PCL 5, PostScript)
         // Checked before QPDL so newer Samsung models reporting PCL, PostScript, or PDF use standard PDLs.
         if (hasPdfCmd) {
             return AutoResolution(
@@ -173,7 +215,7 @@ object PrinterCapabilityResolver {
             )
         }
 
-        // 3. Explicit QPDL / SPL reported in IEEE 1284 CMD
+        // 4. Explicit QPDL / SPL reported in IEEE 1284 CMD
         if (hasQpdl) {
             val isColor = ipp?.colorSupported == true ||
                 modelHint.contains("CLP-") ||
@@ -192,15 +234,15 @@ object PrinterCapabilityResolver {
             )
         }
 
-        // 4. Known incompatible / host-based languages reported (e.g. PCL 3 inkjet, ZjStream, UFR II, ESC/P2)
-        if (hasPcl3Only) {
-            val isColor = inferColorFromModel(modelHint, default = true)
+        // 5. If IPP-USB interface only offers URF or image/* formats (and no supported PDF/PCL/PS/QPDL CMD exists), mark UNSUPPORTED
+        if (ippOnlyUnsupportedFormats) {
+            val fmtList = ipp!!.documentFormatsSupported.joinToString(", ")
             return AutoResolution(
-                protocol = if (isColor) DriverProtocol.PCL_5C_COLOR else DriverProtocol.PCL_5E_MONO,
-                colorSupported = isColor,
-                isFallback = true,
-                reason = "Printer reported PCL 3 (${cmdTokens.joinToString()}), which is not PCL 5 compatible",
-                warning = "Printer reported PCL 3 (${cmdTokens.joinToString()}), an older inkjet format incompatible with PCL 5. Printing PCL 5 may produce raw @PJL text or garbage lines."
+                protocol = DriverProtocol.UNSUPPORTED,
+                colorSupported = false,
+                isFallback = false,
+                reason = "$UNSUPPORTED_DRIVER_MESSAGE (IPP formats: $fmtList)",
+                warning = "$UNSUPPORTED_DRIVER_MESSAGE. Only unsupported IPP formats were reported ($fmtList); choose a manual override only if you know the printer's raw USB language."
             )
         }
 
@@ -210,7 +252,7 @@ object PrinterCapabilityResolver {
             "Printer did not report any IEEE 1284 CMD language"
         }
 
-        // 5. Nothing standard reported -> Samsung VID fallback (SCX-3200 0x3441 is verified; others require confirmation)
+        // 6. Nothing standard reported -> Samsung VID fallback (SCX-3200 0x3441 is verified; others require confirmation)
         if (deviceInfo.vendorId == VID_SAMSUNG) {
             val isColor = ipp?.colorSupported == true ||
                 modelHint.contains("CLP-") ||
@@ -220,7 +262,7 @@ object PrinterCapabilityResolver {
             } else {
                 DriverProtocol.SAMSUNG_QPDL_0X11
             }
-            val isVerifiedScx3200 = deviceInfo.productId == PID_SAMSUNG_SCX3200
+            val isVerifiedScx3200 = isHardwareVerifiedPrinter(deviceInfo)
             return AutoResolution(
                 protocol = protocol,
                 colorSupported = isColor,
@@ -234,7 +276,7 @@ object PrinterCapabilityResolver {
             )
         }
 
-        // 6. Unverified Best-Effort Vendor Fallback (requires explicit user confirmation or tiny probe page before printing)
+        // 7. Unverified Best-Effort Vendor Fallback (requires explicit confirmation or 1-inch test page first)
         return when (deviceInfo.vendorId) {
             VID_HP, VID_BROTHER, VID_LEXMARK, VID_KYOCERA -> {
                 val color = inferColorFromModel(modelHint, default = false)
@@ -244,7 +286,7 @@ object PrinterCapabilityResolver {
                     colorSupported = color,
                     isFallback = true,
                     reason = "$reportedCmdSummary; unverified fallback for vendor 0x%04X".format(deviceInfo.vendorId),
-                    warning = "$reportedCmdSummary. Many entry-level or host-based models from this brand do not support ${proto.displayName} and will print raw @PJL text or garbage. Run a 1-line probe first or confirm the language."
+                    warning = "$reportedCmdSummary. Many entry-level or host-based models from this brand do not support ${proto.displayName} and will print raw @PJL text or garbage. Print a 1-inch test page first or confirm the language."
                 )
             }
             VID_CANON, VID_EPSON -> {
@@ -253,7 +295,7 @@ object PrinterCapabilityResolver {
                     colorSupported = true,
                     isFallback = true,
                     reason = "$reportedCmdSummary; unverified fallback for vendor 0x%04X".format(deviceInfo.vendorId),
-                    warning = "$reportedCmdSummary, and no IPP-over-USB (7/1/4) interface was detected. Most Canon and Epson inkjets/host-based printers do not speak PCL 5c and will print garbage unless confirmed."
+                    warning = "$reportedCmdSummary, and no IPP-over-USB PWG-Raster/PDF support was found. Most Canon and Epson inkjets/host-based printers do not speak PCL 5c and will print garbage unless confirmed."
                 )
             }
             else -> {
@@ -262,11 +304,14 @@ object PrinterCapabilityResolver {
                     colorSupported = false,
                     isFallback = true,
                     reason = "$reportedCmdSummary; unverified monochrome PCL 5e fallback",
-                    warning = "$reportedCmdSummary. Guessing PCL 5e on an unverified printer can print raw @PJL text or garbage. Run a tiny probe page first."
+                    warning = "$reportedCmdSummary. Guessing PCL 5e on an unverified printer can print raw @PJL text or garbage. Print a 1-inch test page first."
                 )
             }
         }
     }
+
+    private fun tokenNormalize(token: String): String =
+        token.uppercase().replace(" ", "").replace("-", "")
 
     private fun inferColorFromModel(modelUpper: String, default: Boolean): Boolean {
         val monoHints = listOf("MONO", "ML-", "SCX-", "M202", "M207", "HL-L23", "HL-11", "LJ 1", "LASERJET P1", "LASERJET M1")

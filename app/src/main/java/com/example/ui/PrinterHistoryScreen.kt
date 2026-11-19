@@ -50,6 +50,7 @@ import com.example.model.PrintJobStatus
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
 import com.example.ui.theme.MonoTextStyle
+import com.example.usb.PrinterCapabilityResolver
 import com.example.viewmodel.PrintStudioViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -61,9 +62,11 @@ fun PrinterHistoryScreen(
     usbState: UsbPrinterState,
     override: PrinterDeviceOverride,
     history: List<PrintHistoryEntity>,
+    isPrinting: Boolean = false,
     onScanUsb: () -> Unit,
     onGrantPermission: () -> Unit,
     onSoftReset: () -> Unit,
+    onPrintTestPage: () -> Unit = {},
     onPrintDiagnosticSheet: () -> Unit,
     onSelectProtocolOverride: (DriverProtocol) -> Unit,
     onSelectColorOverride: (ColorOverrideMode) -> Unit,
@@ -143,8 +146,27 @@ fun PrinterHistoryScreen(
                     val info = usbState.deviceInfo
                     val profile = usbState.profile
                     val ieee = usbState.ieee1284
+                    val isUnsupported = profile.effectiveProtocol == DriverProtocol.UNSUPPORTED
+                    val isHardwareVerified = PrinterCapabilityResolver.isHardwareVerifiedPrinter(info)
 
-                    if (profile.isBestEffortFallback) {
+                    if (isUnsupported) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.small)
+                                .background(studio.crimsonSoft)
+                                .padding(10.dp)
+                        ) {
+                            Icon(Icons.Filled.Warning, contentDescription = null, tint = studio.crimson, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = profile.unverifiedLanguageWarning ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = studio.crimson
+                            )
+                        }
+                    } else if (profile.isBestEffortFallback) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -156,7 +178,7 @@ fun PrinterHistoryScreen(
                             Icon(Icons.Filled.Warning, contentDescription = null, tint = studio.amber, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Best-effort fallback active (${profile.resolutionReason}). You can pin an explicit protocol below.",
+                                text = "Best-effort fallback active (${profile.resolutionReason}). Print a 1-inch test page or pin an explicit protocol below.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = studio.amber
                             )
@@ -167,6 +189,14 @@ fun PrinterHistoryScreen(
                     TelemetryLine("USB VID:PID", info.vidPidKey)
                     TelemetryLine("Active Interface", profile.activeInterfaceLabel)
                     TelemetryLine("Resolved Driver", profile.effectiveProtocol.displayName)
+                    TelemetryLine(
+                        "Test Page Status",
+                        when {
+                            isHardwareVerified -> "Hardware-verified (SCX-3200)"
+                            override.testPageVerified -> "1-inch test page verified"
+                            else -> "Required before first full job"
+                        }
+                    )
                     TelemetryLine(
                         "IEEE 1284 CMD",
                         ieee.commandSetTokens.joinToString(", ").ifBlank { "(none)" }
@@ -198,6 +228,20 @@ fun PrinterHistoryScreen(
                         }
                     }
 
+                    Button(
+                        onClick = onPrintTestPage,
+                        enabled = !isUnsupported && !isPrinting,
+                        colors = ButtonDefaults.buttonColors(containerColor = studio.primaryInk),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("diag_print_test_page_button")
+                    ) {
+                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.action_print_test_page))
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(
                             onClick = onSoftReset,
@@ -213,6 +257,7 @@ fun PrinterHistoryScreen(
 
                         Button(
                             onClick = onPrintDiagnosticSheet,
+                            enabled = !isUnsupported && !isPrinting,
                             colors = ButtonDefaults.buttonColors(containerColor = studio.activeAccent),
                             modifier = Modifier
                                 .weight(1f)

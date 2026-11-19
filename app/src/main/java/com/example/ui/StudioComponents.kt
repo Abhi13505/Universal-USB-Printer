@@ -47,9 +47,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.model.DriverProtocol
 import com.example.model.UsbPrinterState
 import com.example.ui.theme.LocalStudioColors
 import com.example.ui.theme.MonoTextStyle
+import com.example.usb.PrinterCapabilityResolver
 
 @Composable
 fun StudioSectionCard(
@@ -136,10 +138,14 @@ fun StudioChoiceChip(
 fun PrinterStatusHeaderCard(
     usbState: UsbPrinterState,
     effectiveMonochrome: Boolean,
+    testPageVerified: Boolean = false,
     onScanUsb: () -> Unit,
     onGrantPermission: () -> Unit
 ) {
     val studio = LocalStudioColors.current
+    val isUnsupported = usbState is UsbPrinterState.Ready &&
+        usbState.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED
+
     StudioSectionCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -150,12 +156,13 @@ fun PrinterStatusHeaderCard(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val (icon, iconBg, iconTint) = when (usbState) {
-                    is UsbPrinterState.Ready -> Triple(Icons.Filled.Print, studio.emeraldSoft, studio.emerald)
-                    is UsbPrinterState.PermissionRequired -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
-                    is UsbPrinterState.Probing -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
-                    is UsbPrinterState.Error -> Triple(Icons.Filled.Error, studio.crimsonSoft, studio.crimson)
-                    UsbPrinterState.Disconnected -> Triple(Icons.Filled.UsbOff, studio.secondaryContainer, studio.mutedGraphite)
+                val (icon, iconBg, iconTint) = when {
+                    isUnsupported -> Triple(Icons.Filled.Warning, studio.crimsonSoft, studio.crimson)
+                    usbState is UsbPrinterState.Ready -> Triple(Icons.Filled.Print, studio.emeraldSoft, studio.emerald)
+                    usbState is UsbPrinterState.PermissionRequired -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
+                    usbState is UsbPrinterState.Probing -> Triple(Icons.Filled.Usb, studio.amberSoft, studio.amber)
+                    usbState is UsbPrinterState.Error -> Triple(Icons.Filled.Error, studio.crimsonSoft, studio.crimson)
+                    else -> Triple(Icons.Filled.UsbOff, studio.secondaryContainer, studio.mutedGraphite)
                 }
                 Box(
                     modifier = Modifier
@@ -197,31 +204,43 @@ fun PrinterStatusHeaderCard(
                     ) {
                         when (usbState) {
                             is UsbPrinterState.Ready -> {
-                                StatusBadgePill(
-                                    label = if (usbState.profile.isBestEffortFallback) "Ready (Fallback)" else "Ready",
-                                    textColor = if (usbState.profile.isBestEffortFallback) studio.amber else studio.emerald,
-                                    backgroundColor = if (usbState.profile.isBestEffortFallback) studio.amberSoft else studio.emeraldSoft
-                                )
-                                val isColorCap = !effectiveMonochrome && usbState.profile.effectiveColorSupported
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(if (isColorCap) studio.activeAccentSoft else studio.secondaryContainer)
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (isColorCap) Icons.Filled.Palette else Icons.Outlined.Contrast,
-                                        contentDescription = if (isColorCap) "Color capability" else "Monochrome capability",
-                                        tint = if (isColorCap) studio.activeAccent else studio.mutedGraphite,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (isColorCap) "Color" else "Mono",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (isColorCap) studio.activeAccent else studio.mutedGraphite
-                                    )
+                                val isHardwareVerified = PrinterCapabilityResolver.isHardwareVerifiedPrinter(usbState.deviceInfo)
+                                when {
+                                    isUnsupported -> {
+                                        StatusBadgePill("Unsupported", studio.crimson, studio.crimsonSoft)
+                                    }
+                                    !isHardwareVerified && !testPageVerified -> {
+                                        StatusBadgePill("Verify Test Page", studio.amber, studio.amberSoft)
+                                    }
+                                    usbState.profile.isBestEffortFallback -> {
+                                        StatusBadgePill("Ready (Fallback)", studio.amber, studio.amberSoft)
+                                    }
+                                    else -> {
+                                        StatusBadgePill("Ready", studio.emerald, studio.emeraldSoft)
+                                    }
+                                }
+                                if (!isUnsupported) {
+                                    val isColorCap = !effectiveMonochrome && usbState.profile.effectiveColorSupported
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .background(if (isColorCap) studio.activeAccentSoft else studio.secondaryContainer)
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isColorCap) Icons.Filled.Palette else Icons.Outlined.Contrast,
+                                            contentDescription = if (isColorCap) "Color capability" else "Monochrome capability",
+                                            tint = if (isColorCap) studio.activeAccent else studio.mutedGraphite,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isColorCap) "Color" else "Mono",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isColorCap) studio.activeAccent else studio.mutedGraphite
+                                        )
+                                    }
                                 }
                             }
                             is UsbPrinterState.PermissionRequired -> {

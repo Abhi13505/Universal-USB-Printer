@@ -23,6 +23,7 @@ import com.example.model.PrintQuality
 import com.example.model.PrintTuningOptions
 import com.example.model.ScaleMode
 import com.example.model.UsbPrinterState
+import com.example.usb.PrinterCapabilityResolver
 import com.example.usb.UsbPrinterManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +31,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -39,6 +42,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class UniversalUsbPrintService : PrintService() {
 
+    private lateinit var preferencesStore: PrinterPreferencesStore
     private lateinit var usbManager: UsbPrinterManager
     private lateinit var historyRepo: PrintHistoryRepository
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -46,8 +50,8 @@ class UniversalUsbPrintService : PrintService() {
 
     override fun onCreate() {
         super.onCreate()
-        val prefs = PrinterPreferencesStore(applicationContext)
-        usbManager = UsbPrinterManager(applicationContext, prefs)
+        preferencesStore = PrinterPreferencesStore(applicationContext)
+        usbManager = UsbPrinterManager(applicationContext, preferencesStore)
         historyRepo = PrintHistoryRepository(AppDatabase.getInstance(applicationContext).printHistoryDao())
         usbManager.startListening()
     }
@@ -82,9 +86,20 @@ class UniversalUsbPrintService : PrintService() {
             printJob.fail(reason)
             return
         }
-        if (state.profile.isBestEffortFallback && !state.profile.overrideActive) {
+        if (state.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED) {
             printJob.fail(
-                "Printer language (${state.profile.effectiveProtocol.shortCode}) is an unverified fallback. Open Universal USB Printer once to run a 1-band probe or confirm the language so paper is not wasted."
+                state.profile.unverifiedLanguageWarning ?: PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE
+            )
+            return
+        }
+        val verified = if (PrinterCapabilityResolver.isHardwareVerifiedPrinter(state.deviceInfo)) {
+            true
+        } else {
+            runBlocking { preferencesStore.observeOverride(state.deviceInfo.vidPidKey).first().testPageVerified }
+        }
+        if (!verified) {
+            printJob.fail(
+                "Open Universal USB Printer once to print and verify the 1-inch test page for ${state.profile.effectiveProtocol.shortCode} before full system print jobs."
             )
             return
         }
@@ -261,6 +276,17 @@ class UniversalUsbPrintService : PrintService() {
         private fun publishState(state: UsbPrinterState) {
             when (state) {
                 is UsbPrinterState.Ready -> {
+                    if (state.profile.effectiveProtocol == DriverProtocol.UNSUPPORTED) {
+                        val info = PrinterInfo.Builder(
+                            printerId,
+                            state.profile.makeAndModel,
+                            PrinterInfo.STATUS_UNAVAILABLE
+                        )
+                            .setDescription(PrinterCapabilityResolver.UNSUPPORTED_DRIVER_MESSAGE)
+                            .build()
+                        addPrinters(listOf(info))
+                        return
+                    }
                     val colorMask = if (state.profile.effectiveColorSupported) {
                         PrintAttributes.COLOR_MODE_COLOR or PrintAttributes.COLOR_MODE_MONOCHROME
                     } else {
